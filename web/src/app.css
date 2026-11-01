@@ -22,7 +22,7 @@
   -webkit-font-smoothing: antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
+@media screen and (prefers-color-scheme: dark) {
   :root {
     --bg: #0d1117;
     --panel: #151b23;
@@ -105,4 +105,12 @@ code.block {
   .panel { padding: 14px; }
   th:nth-child(n+4), td:nth-child(n+4) { display: none; }
   td .mono { word-break: break-all; }
+}
+
+@media print {
+  :root { color-scheme: light; font-size: 12px; --bg: #fff; --panel: #fff; }
+  body { background: #fff; }
+  .no-print { display: none !important; }
+  .panel { border: none; box-shadow: none; padding: 0; break-inside: avoid; }
+  a { color: inherit; }
 }

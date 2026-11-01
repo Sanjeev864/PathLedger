@@ -8,6 +8,7 @@
   import EventPage from './routes/Event.svelte'
   import Setup from './routes/Setup.svelte'
   import Invite from './routes/Invite.svelte'
+  import Reports from './routes/Reports.svelte'
 
   let email = $state('')
   let password = $state('')
@@ -54,6 +55,7 @@
   const nav = [
     { href: '#/', label: 'Sites', match: ['overview', 'site'] },
     { href: '#/events', label: 'Events', match: ['events', 'event'] },
+    { href: '#/reports', label: 'Reports', match: ['reports'] },
     { href: '#/setup', label: 'Setup', match: ['setup'] },
   ]
   const tenantName = $derived(session.me?.memberships.find((m) => m.tenant_id === session.me?.tenant_id)?.tenant_name)
@@ -81,7 +83,7 @@
     </form>
   </main>
 {:else}
-  <header>
+  <header class="no-print">
     <div class="bar">
       <a class="brand" href="#/"><img src="./favicon.svg" alt="" width="24" height="24" /> PathLedger</a>
       <nav>
@@ -110,6 +112,8 @@
         <Events />
       {:else if router.route.name === 'event'}
         {#key router.route.id}<EventPage id={router.route.id} />{/key}
+      {:else if router.route.name === 'reports'}
+        {#key router.route.month}<Reports month={router.route.month} />{/key}
       {:else if router.route.name === 'setup'}
         <Setup />
       {/if}
@@ -131,5 +135,6 @@
   nav a.active { color: var(--ink); background: var(--bg); }
   .who, .org { font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
   .content { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+  @media print { .content { max-width: none; padding: 0; } }
   @media (max-width: 760px) { .bar { gap: 10px; flex-wrap: wrap; } .brand { font-size: 0; gap: 0; } .who { display: none; } }
 </style>

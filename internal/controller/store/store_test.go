@@ -272,3 +272,53 @@ func TestPurge(t *testing.T) {
 		t.Fatalf("gauges: %v %v", g, err)
 	}
 }
+
+func TestSLAReportData(t *testing.T) {
+	f := setup(t)
+	tt, _ := f.s.CreateTest(ctx, f.tenant.ID, nil, wire.Test{Kind: wire.KindICMP, Target: "1.1.1.1", IntervalSeconds: 30, TimeoutMillis: 1000})
+	agent := enroll(t, f, f.site.ID)
+	id, _ := f.s.AuthenticateAgent(ctx, agent.AgentToken)
+	to := time.Now().UTC().Truncate(time.Minute).Add(time.Minute) // sites created just now are in range
+	from := to.Add(-6 * time.Hour)
+	var rs []wire.Result
+	for i := 1; i <= 100; i++ {
+		lat := float64(i)
+		rs = append(rs, wire.Result{TestID: tt.ID, Time: to.Add(-time.Duration(i) * time.Minute), Kind: wire.KindICMP,
+			Target: "1.1.1.1", Success: i%10 != 0, LatencyMS: &lat})
+	}
+	// Outside the period, and a traceroute: both excluded.
+	rs = append(rs, wire.Result{TestID: tt.ID, Time: from.Add(-time.Minute), Kind: wire.KindICMP, Target: "1.1.1.1", Success: true})
+	if acc, rej, err := f.s.InsertResults(ctx, id, rs); err != nil || rej != 0 {
+		t.Fatalf("insert: %d %d %v", acc, rej, err)
+	}
+
+	// Started before the period, resolved inside it: 30 minutes count.
+	e1, _ := f.s.OpenEvent(ctx, store.Event{TenantID: f.tenant.ID, SiteID: f.site.ID, Verdict: "isp", Summary: "ISP", StartedAt: from.Add(-time.Hour)})
+	if _, err := f.s.ClearEvent(ctx, e1.ID, from.Add(30*time.Minute), 1); err != nil {
+		t.Fatal(err)
+	}
+	// Still open: counts until the end of the period.
+	if _, err := f.s.OpenEvent(ctx, store.Event{TenantID: f.tenant.ID, SiteID: f.site.ID, Verdict: "local", Summary: "LAN", StartedAt: to.Add(-20 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := f.s.SLAReportData(ctx, f.tenant.ID, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.TenantName != f.tenant.Name || len(d.Sites) != 1 || len(d.Incidents) != 2 || len(d.Tests) != 1 {
+		t.Fatalf("data: %+v", d)
+	}
+	if d.Incidents[0].Minutes != 30 || d.Incidents[1].Minutes != 20 {
+		t.Fatalf("incident minutes: %v %v", d.Incidents[0].Minutes, d.Incidents[1].Minutes)
+	}
+	r := d.Tests[0]
+	if r.Samples != 100 || r.Successes != 90 || r.LatencyP50 == nil || *r.LatencyP50 < 49 || *r.LatencyP50 > 51 ||
+		r.IntervalSeconds == nil || *r.IntervalSeconds != 30 {
+		t.Fatalf("test stats: %+v", r)
+	}
+
+	if _, err := f.s.SLAReportData(ctx, "00000000-0000-0000-0000-000000000000", from, to); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown tenant: %v", err)
+	}
+}

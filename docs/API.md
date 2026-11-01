@@ -211,6 +211,26 @@ event per site. `verdict` is one of `local`, `isp`, `upstream`, `dns`, `app`,
 | `GET` | `/api/v1/events` | `state` (`open`/`resolved`), `site_id`, `limit` (≤1000) | `{"items": [Event]}` newest first |
 | `GET` | `/api/v1/events/{id}` | | `{"id", "site_id", "state", "verdict", "summary", "evidence": [], "affected_tests": [], "started_at", "updated_at", "resolved_at"}` |
 
+### Service reports
+
+`GET /api/v1/reports/sla?month=2026-10&tz=Asia/Kolkata` — the monthly
+service-level report the dashboard prints under **Reports**. `month` defaults
+to the current month (reported up to now, with `"partial": true`); `tz` is an
+IANA zone (default `UTC`) that sets the month boundaries. Months in the
+future or more than five years back return 400.
+
+Per site: `monitored_minutes` (from the later of the month start and the
+site's creation), `impaired_minutes` (incidents with verdict `local`, `isp`,
+`upstream`, `dns`, `offline` or `unknown`, clipped to the month — `app`
+incidents do not count), `isp_minutes`, `availability_pct` (1 − impaired /
+monitored, floored to three decimals), `incidents`, `longest_incident_minutes`,
+`by_verdict` and `tests[]` with `samples`, `success_pct`, latency
+`p50/p95/p99` of successful probes, `loss_avg_pct` and `coverage_pct`
+(received ÷ expected samples). Traceroutes are excluded from `tests`.
+`incidents[]` lists every overlapping incident (first 2000;
+`incidents_truncated` says when more exist) with its `minutes` inside the
+month.
+
 ### Notification channels
 
 | Method | Path | Body | Response |

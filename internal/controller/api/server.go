@@ -49,6 +49,7 @@ type Store interface {
 	ListAPIKeys(ctx context.Context, tenantID string) ([]store.APIKey, error)
 	RevokeAPIKey(ctx context.Context, tenantID, keyID string) error
 	Series(ctx context.Context, tenantID, siteID, testID string, from, to time.Time, step time.Duration) ([]store.SeriesPoint, error)
+	SLAReportData(ctx context.Context, tenantID string, from, to time.Time) (store.ReportData, error)
 
 	CreateUser(ctx context.Context, email, name, hash string) (store.User, error)
 	UserByEmail(ctx context.Context, email string) (store.User, error)
@@ -160,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/api-keys/{id}", s.write(s.revokeAPIKey))
 	mux.Handle("GET /api/v1/results", s.read(s.queryResults))
 	mux.Handle("GET /api/v1/series", s.read(s.series))
+	mux.Handle("GET /api/v1/reports/sla", s.read(s.slaReport))
 	mux.Handle("GET /api/v1/events", s.read(s.listEvents))
 	mux.Handle("GET /api/v1/events/{id}", s.read(s.getEvent))
 	mux.Handle("GET /api/v1/channels", s.read(s.listChannels))

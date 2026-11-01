@@ -23,6 +23,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // report time zones work in minimal images
 
 	"github.com/sanjeev864/pathledger/internal/buildinfo"
 	"github.com/sanjeev864/pathledger/internal/controller/alert"

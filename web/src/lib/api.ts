@@ -198,3 +198,63 @@ export function duration(fromIso: string, toIso?: string | null): string {
 export function targetLabel(t: Pick<Test, 'kind' | 'target'>): string {
   return `${t.kind.toUpperCase()} ${t.target}`
 }
+
+export interface ReportTest {
+  test_id: string
+  kind: ProbeKind
+  target: string
+  samples: number
+  successes: number
+  expected_samples: number | null
+  coverage_pct: number | null
+  success_pct: number
+  latency_p50_ms: number | null
+  latency_p95_ms: number | null
+  latency_p99_ms: number | null
+  loss_avg_pct: number | null
+}
+
+export interface ReportSite {
+  site_id: string
+  name: string
+  monitored_from: string | null
+  monitored_minutes: number
+  impaired_minutes: number
+  isp_minutes: number
+  availability_pct: number | null
+  incidents: number
+  longest_incident_minutes: number
+  by_verdict: Record<string, { count: number; minutes: number }>
+  tests: ReportTest[]
+}
+
+export interface ReportIncident {
+  id: string
+  site_id: string
+  verdict: string
+  summary: string
+  started_at: string
+  resolved_at: string | null
+  minutes: number
+}
+
+export interface SLAReport {
+  tenant_name: string
+  period: string
+  time_zone: string
+  from: string
+  to: string
+  partial: boolean
+  generated_at: string
+  sites: ReportSite[]
+  incidents: ReportIncident[]
+  incidents_truncated: boolean
+}
+
+export function minutes(m: number): string {
+  if (m < 1) return m > 0 ? '<1 min' : '0 min'
+  if (m < 60) return `${Math.round(m)} min`
+  const h = Math.floor(m / 60)
+  const r = Math.round(m % 60)
+  return r ? `${h} h ${r} min` : `${h} h`
+}
