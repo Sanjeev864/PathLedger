@@ -24,7 +24,8 @@ Last updated: 2026-11-01.
 | Controller CLI (`serve`, `migrate`, `tenant create`, `apikey create`) | Done | e2e |
 | End-to-end script | Done | Passes locally |
 | Cross-compiled agents (amd64, arm64, armv7, mips, mipsle) | Done | `make dist` |
-| Dockerfile, Compose stack, systemd unit, CI workflow | Written | **Not yet executed** — see known issues |
+| Dockerfile, Compose stack, CI workflow | Done | GitHub Actions: images build, Compose stack serves `/readyz`, tenant creation works |
+| Hardened systemd unit for agents | Done | `systemd-analyze verify`; not yet run on a real device |
 | README, architecture, API, deployment docs | Done | — |
 
 ## Milestone 2 — Insight (next; completes the MVP)
@@ -64,7 +65,7 @@ failover built on PathLedger measurements.
 
 | Area | Issue | Plan |
 | --- | --- | --- |
-| Packaging | The Dockerfile, Compose stack and GitHub Actions workflow were written but could not be run in the development environment (no Docker; repository push not yet authorised). | Run on first push; fix anything CI reports. |
+| Agents | Not yet run on a Raspberry Pi or OpenWrt router; only cross-compiled. | First device test in M2. |
 | Database | The TimescaleDB migration path is untested; plain PostgreSQL is fully tested. | Test with the `timescale/timescaledb` image in M2. |
 | ICMP | IPv4 only; targets resolving only to IPv6 fail with a `config` error. | Add ICMPv6 in M2. |
 | DNS | Uses Go's resolver: reports answers and timing, not RCODE, TTL or DNSSEC status. | Raw DNS client in M2 if customers need it. |
