@@ -1,7 +1,8 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/sanjeev864/pathledger/internal/buildinfo.Version=$(VERSION)
-# Agent targets: x86 servers, Raspberry Pi (arm64/armv7) and MIPS OpenWrt routers.
-AGENT_PLATFORMS := linux/amd64 linux/arm64 linux/arm/7 linux/mipsle/softfloat linux/mips/softfloat
+# Agent targets: the computers a business already has (Windows and Mac PCs,
+# Linux servers and cloud VMs). No special hardware is needed.
+AGENT_PLATFORMS := linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64
 
 .PHONY: build web test test-db lint e2e lab dist clean
 
@@ -36,11 +37,10 @@ lab: build
 dist:
 	@mkdir -p dist
 	@for p in $(AGENT_PLATFORMS); do \
-		os=$$(echo $$p | cut -d/ -f1); arch=$$(echo $$p | cut -d/ -f2); extra=$$(echo $$p | cut -d/ -f3); \
-		name=pathledger-agent-$$os-$$arch$${extra:+-$$extra}; \
-		env CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch GOARM=$$( [ $$arch = arm ] && echo $$extra ) \
-		    GOMIPS=$$( case $$arch in mips*) echo $$extra;; esac ) \
-		    go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$$name ./cmd/pathledger-agent && echo "built dist/$$name"; \
+		os=$${p%/*}; arch=$${p#*/}; \
+		name=pathledger-agent-$$os-$$arch$$( [ $$os = windows ] && echo .exe ); \
+		env CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+		    go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$$name ./cmd/pathledger-agent && echo "built dist/$$name" || exit 1; \
 	done
 
 clean:

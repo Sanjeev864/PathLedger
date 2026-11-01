@@ -423,3 +423,14 @@ func (s *Store) RevokeAPIKey(ctx context.Context, tenantID, keyID string) error 
 	}
 	return nil
 }
+
+// Backdate sets the creation time of a tenant's sites and tests. It exists
+// for simulated (demo) tenants, whose history starts before they were
+// created; reports count a site only from its creation.
+func (s *Store) Backdate(ctx context.Context, tenantID string, at time.Time) error {
+	if _, err := s.pool.Exec(ctx, "UPDATE sites SET created_at = $2 WHERE tenant_id = $1", tenantID, at); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, "UPDATE tests SET created_at = $2 WHERE tenant_id = $1", tenantID, at)
+	return err
+}

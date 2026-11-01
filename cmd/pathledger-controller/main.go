@@ -48,6 +48,8 @@ Commands:
   apikey create  create an additional API key for a tenant
   user create    create a dashboard user and add them to a tenant
                  (password from PATHLEDGER_PASSWORD, or the first line of stdin)
+  demo           create a simulated customer (3 clinics, two weeks of history)
+                 and keep feeding it live data; run alongside serve
   version        print the version
 
 Configuration (environment):
@@ -113,6 +115,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = apikeyCreate(ctx, args, stdout, log)
 	case "user create":
 		err = userCreate(ctx, args, os.Stdin, stdout, log)
+	case "demo":
+		err = demoCmd(ctx, args, stdout, log)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usage)
 		return 2

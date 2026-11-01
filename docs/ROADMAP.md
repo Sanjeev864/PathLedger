@@ -1,6 +1,12 @@
 # Roadmap and status
 
-Last updated: 2026-11-01 (Milestone 3 software complete).
+Last updated: 2026-11-01 (software-only, zero-cost delivery).
+
+**Product constraint:** PathLedger ships as pure software and costs nothing
+to build, run or demonstrate. No hardware is bought or required: agents run
+on computers the customer already has (Windows, macOS, Linux, cloud VMs,
+Docker), and every service it uses has a free option (see
+[DEPLOYMENT.md](DEPLOYMENT.md#zero-cost-deployment-options)).
 
 * **MVP** = Milestones 1 + 2: enough for a campus pilot that shows real ISP faults.
 * **Production release** = Milestone 3: the point at which a customer can be charged.
@@ -23,9 +29,9 @@ Last updated: 2026-11-01 (Milestone 3 software complete).
 | Tenant isolation | Done | API + store tests |
 | Controller CLI (`serve`, `migrate`, `tenant create`, `apikey create`) | Done | e2e |
 | End-to-end script | Done | Passes locally |
-| Cross-compiled agents (amd64, arm64, armv7, mips, mipsle) | Done | `make dist` |
+| Agent binaries for Windows, macOS and Linux (amd64, arm64) | Done | `make dist`; installed and run as a service on all three in CI |
 | Dockerfile, Compose stack, CI workflow | Done | GitHub Actions: images build, Compose stack serves `/readyz`, tenant creation works |
-| Hardened systemd unit for agents | Done | `systemd-analyze verify`; not yet run on a real device |
+| Hardened systemd unit for agents | Done | Installed and run by CI on Ubuntu |
 | README, architecture, API, deployment docs | Done | — |
 
 ## Milestone 2 — Insight ✅ complete (MVP)
@@ -56,7 +62,9 @@ Last updated: 2026-11-01 (Milestone 3 software complete).
 | Agent credential rotation (30-day policy and on demand, crash-safe hand-over) | Done | Database and API tests; real agent rotated against a running controller |
 | Signed agent self-update (offline ed25519 key, pinned on agents, rollback after 3 failed starts) | Done | Unit tests (tampering, wrong key, downgrade, crash loop); real v0.1.0 → v0.2.0 update with exec in place and relaunch after restart |
 | Mutual TLS for agents | **Deferred** | TLS terminates at Caddy/Cloudflare in the recommended deployment, so mTLS needs certificate forwarding and a private CA; bearer tokens are hashed at rest and rotated. Enterprise option. |
-| OpenWrt package | **Not started** | Needs the OpenWrt SDK and a test router. The static mips/mipsle/arm agent binaries already run on OpenWrt by hand. |
+| Agent on ordinary computers: Windows (system ICMP service, no admin rights for probes), macOS, Linux; service installers for each; owner-only credential storage on Windows | Done | CI on real Windows, macOS and Ubuntu machines: unit tests plus installer round-trip until ICMP, TCP and traceroute results arrive |
+| Simulated demo customer with live fault injection (`demo`) | Done | Unit and database tests; live ISP fault diagnosed by the running controller and shown in the dashboard |
+| ~~OpenWrt router package~~ | **Dropped** | Would need router hardware; out of scope for a software-only product |
 | Backups | Documented (`pg_dump` daily) | Operator's responsibility; not automated |
 | First 5–10 paying pilot sites | **Not started** | Owner's task |
 
@@ -80,7 +88,9 @@ failover built on PathLedger measurements.
 | Analytics | Baselines are one 7-day median per test, not per hour of week, so busy-hour slowdowns that are "normal" may alert. | Hour-of-week buckets once pilots provide data. |
 | Analytics | Fixed: during recovery, a network incident was relabelled "application" as some tests came back first. Network verdicts are now kept until the event resolves, and the lab checks the stored verdict after recovery. | — |
 | Analytics | A traceroute is at most 60 s old, so `local`/`upstream` verdicts can start as `isp` and be refined within a minute (the lab measures this). | Trigger an on-demand traceroute when a site turns unhealthy (M3). |
-| Agents | Not yet run on a Raspberry Pi or OpenWrt router; only cross-compiled. ICMP and traceroute are IPv4-only. | Device test and ICMPv6 in M3. |
+| Agents | ICMP and traceroute are IPv4-only. On Windows, round-trip times have 1 ms resolution and traceroute uses ICMP echo (like `tracert`) rather than Paris UDP, so load-balanced paths may blend. Windows agents do not self-update (reinstall instead). | ICMPv6; a Windows service wrapper if customers need it. |
+| Agents | An agent must run on a computer that stays on; a sleeping laptop shows the site as offline. | Document per customer; "business hours" schedules per site later. |
+| Analytics | With the default 5-minute window, a site-wide outage can first be labelled "application" for 1–2 minutes while tests fail one by one, then corrected (seen in the live demo). The first alert may carry the early label. | Delay the first alert until the verdict is stable for one evaluation. |
 | Database | TimescaleDB path (hypertable, `drop_chunks` retention) untested against a real TimescaleDB; compression not configured. | Test before the first large customer. |
 | Dashboard | Bundle is ~210 KB gzipped (mostly ECharts). | Code-split charts if load time matters on slow links. |
 | Reports | Availability counts time with an open incident; an incident's final verdict is applied to its whole duration. Times are in the viewer's browser time zone. | Per-tenant report time zone setting. |

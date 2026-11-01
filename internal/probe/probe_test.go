@@ -232,3 +232,14 @@ func TestRunnerStampsIdentity(t *testing.T) {
 		t.Fatalf("unknown kind should be a config failure: %+v", res)
 	}
 }
+
+func TestStripIPv4Header(t *testing.T) {
+	reply := []byte{0, 0, 0, 0, 0, 1, 0, 2, 'x'}
+	withHeader := append([]byte{0x45, 0, 0, 29, 0, 0, 0, 0, 64, 1, 0, 0, 127, 0, 0, 1, 127, 0, 0, 1}, reply...)
+	if got := stripIPv4Header(withHeader); string(got) != string(reply) {
+		t.Fatalf("header not stripped: %v", got)
+	}
+	if got := stripIPv4Header(reply); string(got) != string(reply) {
+		t.Fatal("bare ICMP changed")
+	}
+}

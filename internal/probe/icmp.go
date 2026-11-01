@@ -29,7 +29,8 @@ const (
 //
 // It prefers unprivileged datagram ping sockets (Linux
 // net.ipv4.ping_group_range, macOS) and falls back to raw sockets, which
-// need root or CAP_NET_RAW. IPv4 only for now.
+// need root or CAP_NET_RAW. On Windows it uses the system ICMP helper, which
+// needs no administrator rights. IPv4 only for now.
 type ICMP struct {
 	Resolver Resolver
 	// Spacing is the gap between echo requests; defaults to 200ms.
@@ -55,17 +56,6 @@ func (p *ICMP) Probe(ctx context.Context, t wire.Test) wire.Result {
 	}
 	details["remote_ip"] = addr.String()
 
-	listen := p.Listen
-	if listen == nil {
-		listen = listenICMP
-	}
-	conn, raw, err := listen()
-	if err != nil {
-		return failure(wire.ErrClassConfig, err)
-	}
-	defer conn.Close()
-	details["socket"] = map[bool]string{true: "raw", false: "datagram"}[raw]
-
 	count := t.Params.Count
 	if count == 0 {
 		count = wire.DefaultICMPCount
@@ -74,6 +64,20 @@ func (p *ICMP) Probe(ctx context.Context, t wire.Test) wire.Result {
 	if spacing == 0 {
 		spacing = 200 * time.Millisecond
 	}
+
+	listen := p.Listen
+	if listen == nil {
+		if sp := systemPinger(); sp != nil {
+			return sysEcho(ctx, sp, addr, count, spacing, t.Timeout(), details)
+		}
+		listen = listenICMP
+	}
+	conn, raw, err := listen()
+	if err != nil {
+		return failure(wire.ErrClassConfig, err)
+	}
+	defer conn.Close()
+	details["socket"] = map[bool]string{true: "raw", false: "datagram"}[raw]
 
 	s, err := newEchoSession(conn, raw, addr)
 	if err != nil {
@@ -193,7 +197,11 @@ func (s *echoSession) ping(ctx context.Context, seq uint16, timeout time.Duratio
 		if !s.fromTarget(from) {
 			continue
 		}
-		id, rseq, payload, ok := parseEchoReply(s.buf[:n])
+		msg := s.buf[:n]
+		if !s.raw {
+			msg = stripIPv4Header(msg)
+		}
+		id, rseq, payload, ok := parseEchoReply(msg)
 		// Datagram ping sockets rewrite the ID, and the kernel already
 		// demultiplexes replies to us, so only raw sockets check it.
 		if !ok || rseq != seq || (s.raw && id != s.id) || !bytes.Equal(payload, s.nonce[:]) {
@@ -224,6 +232,19 @@ func marshalEcho(id, seq uint16, payload []byte) []byte {
 	binary.BigEndian.PutUint16(b[6:], seq)
 	copy(b[icmpHeaderLen:], payload)
 	binary.BigEndian.PutUint16(b[2:], checksum(b))
+	return b
+}
+
+// stripIPv4Header removes an IPv4 header if present. macOS datagram ping
+// sockets deliver replies with the IP header; Linux ones do not. An ICMP
+// message never starts with 0x4_ (no ICMP type is 64-79 here), so the
+// check is unambiguous.
+func stripIPv4Header(b []byte) []byte {
+	if len(b) >= 20 && b[0]>>4 == 4 {
+		if ihl := int(b[0]&0x0f) * 4; ihl >= 20 && len(b) >= ihl {
+			return b[ihl:]
+		}
+	}
 	return b
 }
 

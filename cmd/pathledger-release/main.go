@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sanjeev864/pathledger/internal/fsperm"
 	"github.com/sanjeev864/pathledger/internal/update"
 )
 
@@ -65,6 +66,9 @@ func run(args []string, out io.Writer) error {
 		}
 		if err := f.Close(); err != nil {
 			return err
+		}
+		if err := fsperm.RestrictFile(*path); err != nil {
+			return fmt.Errorf("restricting access to the key file: %w", err)
 		}
 		fmt.Fprintf(out, "private key written to %s — keep it offline and backed up\npublic key (set PATHLEDGER_UPDATE_PUBLIC_KEY on agents):\n%s\n",
 			*path, base64.StdEncoding.EncodeToString(pub))

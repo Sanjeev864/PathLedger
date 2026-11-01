@@ -105,7 +105,7 @@ Token buckets per credential: agents 1 request/s (burst 20), API keys
 Exchanges a single-use enrolment token for an agent credential. No auth header.
 
 ```json
-{"token": "ple_...", "hostname": "branch-pi", "agent_version": "v0.1.0", "os": "linux", "arch": "arm64"}
+{"token": "ple_...", "hostname": "frontdesk-pc", "agent_version": "v0.1.0", "os": "linux", "arch": "arm64"}
 ```
 
 `201 Created`:

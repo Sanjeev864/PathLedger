@@ -34,7 +34,9 @@ const (
 
 // Traceroute discovers the forward path with UDP probes and ICMP replies.
 // It needs a raw ICMP socket (root or CAP_NET_RAW, which Docker grants by
-// default and the systemd unit grants explicitly). IPv4 only for now.
+// default and the systemd unit grants explicitly). On Windows it sends ICMP
+// echo requests with rising TTLs through the system ICMP helper instead, as
+// tracert does, without administrator rights. IPv4 only for now.
 type Traceroute struct {
 	Resolver Resolver
 	// ListenICMP opens the raw socket that receives router replies.
@@ -63,6 +65,13 @@ func (p *Traceroute) Probe(ctx context.Context, t wire.Test) wire.Result {
 		return failure(wire.ErrClassConfig, errors.New("traceroute over IPv6 is not supported yet"))
 	}
 	details["remote_ip"] = dst.String()
+
+	if sp := systemPinger(); sp != nil && p.ListenICMP == nil {
+		details["method"] = "icmp"
+		tr := &tracer{dst: dst, hop: sysHop(sp, dst)}
+		hops, reached := tr.run(ctx, t.Params.TraceHops(), t.Params.TraceCount(), t.Timeout())
+		return traceResult(hops, reached, details)
+	}
 
 	listen := p.ListenICMP
 	if listen == nil {
@@ -108,6 +117,8 @@ type tracer struct {
 	srcPort uint16
 	buf     []byte
 	seq     int
+	// hop, when set, replaces the UDP probe (system ICMP on Windows).
+	hop func(ctx context.Context, ttl int, wait time.Duration) (traceReply, error)
 }
 
 type traceReply struct {
@@ -126,7 +137,11 @@ func (tr *tracer) run(ctx context.Context, maxHops, perHop int, wait time.Durati
 		stop := false
 		for q := 0; q < perHop && ctx.Err() == nil; q++ {
 			hop.Sent++
-			rep, err := tr.probe(ctx, ttl, wait)
+			step := tr.probe
+			if tr.hop != nil {
+				step = tr.hop
+			}
+			rep, err := step(ctx, ttl, wait)
 			if err != nil {
 				continue
 			}

@@ -96,7 +96,7 @@ func TestFullAgentLifecycle(t *testing.T) {
 	}
 
 	var enrolled wire.EnrollResponse
-	if code := h.call("POST", "/api/v1/agent/enroll", "", wire.EnrollRequest{Token: tok.Token, Hostname: "branch-pi"}, &enrolled); code != 201 {
+	if code := h.call("POST", "/api/v1/agent/enroll", "", wire.EnrollRequest{Token: tok.Token, Hostname: "frontdesk-pc"}, &enrolled); code != 201 {
 		t.Fatalf("enroll: %d", code)
 	}
 	if code := h.call("POST", "/api/v1/agent/enroll", "", wire.EnrollRequest{Token: tok.Token}, nil); code != 401 {
@@ -167,7 +167,7 @@ func TestFullAgentLifecycle(t *testing.T) {
 			LastSeenAt *time.Time `json:"last_seen_at"`
 		} `json:"items"`
 	}
-	if code := h.call("GET", "/api/v1/agents", h.apiKey, nil, &agents); code != 200 || len(agents.Items) != 1 || agents.Items[0].Hostname != "branch-pi" || agents.Items[0].LastSeenAt == nil {
+	if code := h.call("GET", "/api/v1/agents", h.apiKey, nil, &agents); code != 200 || len(agents.Items) != 1 || agents.Items[0].Hostname != "frontdesk-pc" || agents.Items[0].LastSeenAt == nil {
 		t.Fatalf("agents: %d %+v", code, agents)
 	}
 

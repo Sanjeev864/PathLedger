@@ -4,7 +4,7 @@ PathLedger has two binaries and one database.
 
 | Component | Runs at | Role |
 | --- | --- | --- |
-| `pathledger-agent` | Each customer branch | Runs probes on schedule, buffers results, uploads them |
+| `pathledger-agent` | An existing computer at each branch (Windows, macOS, Linux, VM or Docker) | Runs probes on schedule, buffers results, uploads them |
 | `pathledger-controller` | PathLedger cloud (or customer-hosted) | Authenticates agents, serves test plans, stores results, evaluates sites, sends alerts, serves the dashboard |
 | PostgreSQL 14+ | Next to the controller | Relational data and the results time series |
 
@@ -82,6 +82,19 @@ upload loop ◄──(every 15 s)── Spool (JSON-lines segments, fsync, size 
   (Caddy, Cloudflare), which is the recommended deployment; it would need
   certificate forwarding and a private CA. It is listed as an enterprise
   option for customers who run the controller with direct TLS.
+
+### Platforms
+
+The agent is pure software and runs on the computers a business already
+has. Probe mechanics differ by operating system:
+
+| | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| ICMP | Datagram ping socket (no privileges if `ping_group_range` allows), else raw socket with `CAP_NET_RAW` | Datagram ping socket (replies carry the IP header, which is stripped) | `IcmpSendEcho` from `iphlpapi.dll`, no administrator rights |
+| Traceroute | Paris UDP + raw ICMP socket | Paris UDP + raw ICMP socket (agent runs as root under launchd) | ICMP echo with rising TTL through `IcmpSendEcho` |
+| Service | systemd unit, dynamic user, only `CAP_NET_RAW` | launchd daemon | Scheduled task at startup as SYSTEM, restarts on failure |
+| Credential protection | Mode 0600 / 0700 | Mode 0600 / 0700 | Protected access list: SYSTEM, Administrators, owner |
+| Self-update | Yes | Yes | No (reinstall) |
 
 ### Probes
 
@@ -207,6 +220,19 @@ binary, so a deployment is still one binary. It talks only to the same-origin
 API using the session cookie (or, for automation, an API key held in
 `sessionStorage`), and is served with a strict Content Security Policy. Charts use `/api/v1/series`, which aggregates in
 PostgreSQL rather than shipping raw results to the browser.
+
+## Demo customer
+
+`pathledger-controller demo` (package `internal/controller/demo`) writes a
+simulated tenant through the same store calls as real agents: enrolled
+agents, tests, results that pass ingest validation, and events. Its live
+feed authenticates as those agents, so the running controller's analysis,
+events and alerts treat it exactly like real data. Faults are modelled on
+what real probes report: an ISP outage makes every test time out and the
+traceroute stop after the LAN gateway; an upstream fault lets the path reach
+the transit network; a local fault silences the gateway itself. It uses
+documentation address ranges (RFC 5737, 2544, 6598), mapped to demo
+networks AS64500/64510/64520, so attribution works without the IPtoASN file.
 
 ## Fault-injection lab
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/sanjeev864/pathledger/internal/fsperm"
+
 	"bytes"
 	"os"
 	"path/filepath"
@@ -15,8 +17,8 @@ func TestKeygenSignVerify(t *testing.T) {
 	if err := run([]string{"keygen", "-out", key}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if fi, _ := os.Stat(key); fi.Mode().Perm() != 0o600 {
-		t.Fatalf("key mode %v", fi.Mode())
+	if ok, err := fsperm.Private(key); err != nil || !ok {
+		t.Fatalf("key file is readable by others: %v", err)
 	}
 	if err := run([]string{"keygen", "-out", key}, &out); err == nil {
 		t.Fatal("keygen overwrote an existing key")

@@ -108,9 +108,9 @@ func classify(err error) wire.ErrorClass {
 		return wire.ErrClassDNS
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
 		return wire.ErrClassTimeout
-	case errors.Is(err, syscall.ECONNREFUSED):
+	case errors.Is(err, syscall.ECONNREFUSED), isRefused(err):
 		return wire.ErrClassRefused
-	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH), isUnreachable(err):
 		return wire.ErrClassUnreach
 	case errors.As(err, &certErr), errors.As(err, &unknownAuth), errors.As(err, &hostErr),
 		errors.As(err, &invalidCert), errors.As(err, &recordErr), errors.As(err, &alertErr):

@@ -12,3 +12,7 @@ import (
 func Exec(path string) error {
 	return syscall.Exec(path, append([]string{path}, os.Args[1:]...), append(os.Environ(), LaunchedEnv+"=1"))
 }
+
+// SelfUpdateSupported reports whether this platform can restart into an
+// update in place.
+const SelfUpdateSupported = true

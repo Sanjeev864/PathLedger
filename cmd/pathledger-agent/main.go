@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,10 +33,12 @@ func env(key, def string) string {
 func run(args []string) int {
 	fs := flag.NewFlagSet("pathledger-agent", flag.ContinueOnError)
 	controller := fs.String("controller", env("PATHLEDGER_CONTROLLER_URL", ""), "controller base URL, e.g. https://pathledger.example.com (env PATHLEDGER_CONTROLLER_URL)")
-	stateDir := fs.String("state-dir", env("PATHLEDGER_STATE_DIR", "/var/lib/pathledger-agent"), "directory for identity and spooled results (env PATHLEDGER_STATE_DIR)")
+	stateDir := fs.String("state-dir", env("PATHLEDGER_STATE_DIR", defaultStateDir()), "directory for identity and spooled results (env PATHLEDGER_STATE_DIR)")
 	logLevel := fs.String("log-level", env("PATHLEDGER_LOG_LEVEL", "info"), "debug, info, warn or error (env PATHLEDGER_LOG_LEVEL)")
 	logFormat := fs.String("log-format", env("PATHLEDGER_LOG_FORMAT", "json"), "json or text (env PATHLEDGER_LOG_FORMAT)")
 	updateKey := fs.String("update-key", env("PATHLEDGER_UPDATE_PUBLIC_KEY", ""), "base64 ed25519 public key(s), comma-separated, trusted to sign agent releases; empty disables automatic updates (env PATHLEDGER_UPDATE_PUBLIC_KEY)")
+	logFile := fs.String("log-file", env("PATHLEDGER_LOG_FILE", ""), "write logs to this file instead of standard error, rotated at 10 MB (env PATHLEDGER_LOG_FILE)")
+	enrollOnly := fs.Bool("enroll-only", false, "enrol (if needed) and exit; used by the installers so the enrolment token is never stored")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -44,7 +47,17 @@ func run(args []string) int {
 		fmt.Println(buildinfo.Version)
 		return 0
 	}
-	log, err := logging.New(os.Stderr, *logLevel, *logFormat)
+	var out io.Writer = os.Stderr
+	if *logFile != "" {
+		f, err := openLog(*logFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "opening log file:", err)
+			return 2
+		}
+		defer f.Close()
+		out = f
+	}
+	log, err := logging.New(out, *logLevel, *logFormat)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -54,6 +67,10 @@ func run(args []string) int {
 	if err != nil {
 		log.Error("invalid update key", "error", err)
 		return 2
+	}
+	if len(keys) > 0 && !agent.SelfUpdateSupported {
+		log.Warn("automatic updates are not supported on this platform; update the agent by reinstalling it")
+		keys = nil
 	}
 	// Run a newer, verified release installed by a previous self-update.
 	if os.Getenv(agent.LaunchedEnv) == "" {
@@ -80,6 +97,14 @@ func run(args []string) int {
 	if err != nil {
 		log.Error("agent could not start", "error", err)
 		return 1
+	}
+	if *enrollOnly {
+		if err := a.Close(); err != nil {
+			log.Error("closing agent state", "error", err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, "enrolled as agent", a.ID())
+		return 0
 	}
 	err = a.Run(ctx)
 	if errors.Is(err, agent.ErrUpdateInstalled) {
