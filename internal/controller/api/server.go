@@ -33,6 +33,14 @@ type Store interface {
 	ListTests(ctx context.Context, tenantID string) ([]store.Test, error)
 	DeleteTest(ctx context.Context, tenantID, testID string) error
 	QueryResults(ctx context.Context, tenantID string, f store.ResultFilter) ([]store.StoredResult, error)
+	ListEvents(ctx context.Context, tenantID string, f store.EventFilter) ([]store.Event, error)
+	GetEvent(ctx context.Context, tenantID, id string) (store.Event, error)
+	CreateChannel(ctx context.Context, c store.Channel) (store.Channel, error)
+	ListChannels(ctx context.Context, tenantID string) ([]store.Channel, error)
+	GetChannel(ctx context.Context, tenantID, id string) (store.Channel, error)
+	DeleteChannel(ctx context.Context, tenantID, id string) error
+	EnqueueDeliveries(ctx context.Context, tenantID, channelID string, payload any) (int, error)
+	ListDeliveries(ctx context.Context, tenantID string, limit int) ([]store.DeliveryStatus, error)
 }
 
 // Server serves the PathLedger API.
@@ -40,11 +48,23 @@ type Server struct {
 	store Store
 	log   *slog.Logger
 	now   func() time.Time
+	// allowHTTPWebhooks permits plain-http webhook URLs (development only).
+	allowHTTPWebhooks bool
 }
 
+// Option configures a Server.
+type Option func(*Server)
+
+// AllowHTTPWebhooks permits http:// webhook URLs; for development only.
+func AllowHTTPWebhooks() Option { return func(s *Server) { s.allowHTTPWebhooks = true } }
+
 // New returns a Server.
-func New(st Store, log *slog.Logger) *Server {
-	return &Server{store: st, log: log, now: time.Now}
+func New(st Store, log *slog.Logger, opts ...Option) *Server {
+	s := &Server{store: st, log: log, now: time.Now}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Handler returns the root handler with all middleware applied.
@@ -70,6 +90,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/tests", s.tenantAuth(s.createTest))
 	mux.Handle("DELETE /api/v1/tests/{id}", s.tenantAuth(s.deleteTest))
 	mux.Handle("GET /api/v1/results", s.tenantAuth(s.queryResults))
+	mux.Handle("GET /api/v1/events", s.tenantAuth(s.listEvents))
+	mux.Handle("GET /api/v1/events/{id}", s.tenantAuth(s.getEvent))
+	mux.Handle("GET /api/v1/channels", s.tenantAuth(s.listChannels))
+	mux.Handle("POST /api/v1/channels", s.tenantAuth(s.createChannel))
+	mux.Handle("DELETE /api/v1/channels/{id}", s.tenantAuth(s.deleteChannel))
+	mux.Handle("POST /api/v1/channels/{id}/test", s.tenantAuth(s.testChannel))
+	mux.Handle("GET /api/v1/deliveries", s.tenantAuth(s.listDeliveries))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")

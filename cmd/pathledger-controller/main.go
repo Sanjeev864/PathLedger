@@ -17,11 +17,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/sanjeev864/pathledger/internal/buildinfo"
+	"github.com/sanjeev864/pathledger/internal/controller/alert"
+	"github.com/sanjeev864/pathledger/internal/controller/analytics"
 	"github.com/sanjeev864/pathledger/internal/controller/api"
 	"github.com/sanjeev864/pathledger/internal/controller/store"
 	"github.com/sanjeev864/pathledger/internal/enrich"
@@ -43,6 +46,9 @@ Configuration (environment):
   PATHLEDGER_LOG_LEVEL     debug, info, warn, error (default info)
   PATHLEDGER_LOG_FORMAT    json or text (default json)
   PATHLEDGER_ASN_DB        path to IPtoASN ip2asn-v4.tsv(.gz) (optional; see scripts/fetch-asn-db.sh)
+  PATHLEDGER_PUBLIC_URL    dashboard URL used for links in notifications (optional)
+  PATHLEDGER_SMTP_HOST, _PORT (587), _USERNAME, _PASSWORD, _FROM   email notifications (optional)
+  PATHLEDGER_TELEGRAM_BOT_TOKEN                                    Telegram notifications (optional)
 `
 
 func main() {
@@ -133,9 +139,26 @@ func serve(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	} else {
 		log.Warn("PATHLEDGER_ASN_DB not set; traceroute hops will not be attributed to networks")
 	}
+	senders, err := alertSenders(log)
+	if err != nil {
+		return err
+	}
+	allowPrivate := os.Getenv("PATHLEDGER_WEBHOOK_ALLOW_PRIVATE") == "true"
+	senders["webhook"] = &alert.Webhook{Client: alert.SafeHTTPClient(allowPrivate)}
+	notifier := &alert.Notifier{Store: st, Log: log, PublicURL: os.Getenv("PATHLEDGER_PUBLIC_URL")}
+
+	// Background workers stop when ctx is cancelled (on shutdown).
+	go analytics.NewEngine(st, notifier, log).Run(ctx, time.Minute)
+	go (&alert.Dispatcher{Store: st, Sender: senders, Log: log}).Run(ctx, 10*time.Second)
+
+	var opts []api.Option
+	if allowPrivate {
+		opts = append(opts, api.AllowHTTPWebhooks())
+		log.Warn("PATHLEDGER_WEBHOOK_ALLOW_PRIVATE is set: webhooks may target private addresses (development only)")
+	}
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           api.New(st, log).Handler(),
+		Handler:           api.New(st, log, opts...).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -202,4 +225,32 @@ func apikeyCreate(ctx context.Context, args []string, stdout io.Writer, log *slo
 		fmt.Fprintf(stdout, "API key created\n  id:      %s\n  api key: %s\n\nStore the API key now; it cannot be shown again.\n", k.ID, key)
 		return nil
 	})
+}
+
+// alertSenders configures email and Telegram from the environment. Either
+// may be absent; channels of that kind then fail with a clear error.
+func alertSenders(log *slog.Logger) (alert.Router, error) {
+	r := alert.Router{}
+	if host := os.Getenv("PATHLEDGER_SMTP_HOST"); host != "" {
+		port, err := strconv.Atoi(env("PATHLEDGER_SMTP_PORT", "587"))
+		if err != nil {
+			return nil, fmt.Errorf("PATHLEDGER_SMTP_PORT: %w", err)
+		}
+		from := os.Getenv("PATHLEDGER_SMTP_FROM")
+		if from == "" {
+			return nil, errors.New("PATHLEDGER_SMTP_FROM is required when PATHLEDGER_SMTP_HOST is set")
+		}
+		r["email"] = &alert.Email{Config: alert.SMTPConfig{
+			Host: host, Port: port, From: from,
+			Username: os.Getenv("PATHLEDGER_SMTP_USERNAME"), Password: os.Getenv("PATHLEDGER_SMTP_PASSWORD"),
+		}}
+	} else {
+		log.Warn("PATHLEDGER_SMTP_HOST not set; email notifications are disabled")
+	}
+	if tok := os.Getenv("PATHLEDGER_TELEGRAM_BOT_TOKEN"); tok != "" {
+		r["telegram"] = &alert.Telegram{Token: tok, Client: &http.Client{Timeout: 15 * time.Second}}
+	} else {
+		log.Warn("PATHLEDGER_TELEGRAM_BOT_TOKEN not set; Telegram notifications are disabled")
+	}
+	return r, nil
 }

@@ -262,3 +262,64 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("readyz %d", code)
 	}
 }
+
+func TestEventsEndpoints(t *testing.T) {
+	h, _ := newHarness(t)
+	var list struct{ Items []any }
+	if code := h.call("GET", "/api/v1/events?state=open", h.apiKey, nil, &list); code != 200 || list.Items == nil {
+		t.Fatalf("list events: %d %+v", code, list)
+	}
+	if code := h.call("GET", "/api/v1/events?state=bogus", h.apiKey, nil, nil); code != 400 {
+		t.Fatalf("bad state accepted: %d", code)
+	}
+	if code := h.call("GET", "/api/v1/events/00000000-0000-0000-0000-000000000000", h.apiKey, nil, nil); code != 404 {
+		t.Fatalf("missing event: %d", code)
+	}
+}
+
+func TestChannelsEndpoints(t *testing.T) {
+	h, otherKey := newHarness(t)
+	var created struct {
+		ID     string         `json:"id"`
+		Config map[string]any `json:"config"`
+	}
+	if code := h.call("POST", "/api/v1/channels", h.apiKey, map[string]any{"kind": "webhook", "name": "ops", "url": "https://hooks.example.com/pl"}, &created); code != 201 {
+		t.Fatalf("create webhook: %d", code)
+	}
+	if secret, _ := created.Config["secret"].(string); len(secret) != 64 {
+		t.Fatalf("secret not returned at creation: %+v", created.Config)
+	}
+	var list struct {
+		Items []struct {
+			Config map[string]any `json:"config"`
+		} `json:"items"`
+	}
+	h.call("GET", "/api/v1/channels", h.apiKey, nil, &list)
+	if len(list.Items) != 1 || list.Items[0].Config["secret"] != "********" {
+		t.Fatalf("secret not masked in listing: %+v", list)
+	}
+	for _, bad := range []map[string]any{
+		{"kind": "webhook", "name": "x", "url": "http://insecure.example.com"},
+		{"kind": "email", "name": "x", "to": []string{"not-an-address"}},
+		{"kind": "telegram", "name": "x", "chat_id": "drop table"},
+		{"kind": "sms", "name": "x"},
+	} {
+		if code := h.call("POST", "/api/v1/channels", h.apiKey, bad, nil); code != 422 {
+			t.Fatalf("invalid channel %v accepted: %d", bad, code)
+		}
+	}
+	var queued map[string]int
+	if code := h.call("POST", "/api/v1/channels/"+created.ID+"/test", h.apiKey, nil, &queued); code != 202 || queued["queued"] != 1 {
+		t.Fatalf("test channel: %d %v", code, queued)
+	}
+	if code := h.call("POST", "/api/v1/channels/"+created.ID+"/test", otherKey("Rival"), nil, nil); code != 404 {
+		t.Fatalf("other tenant tested channel: %d", code)
+	}
+	var deliveries struct{ Items []any }
+	if h.call("GET", "/api/v1/deliveries", h.apiKey, nil, &deliveries); len(deliveries.Items) != 1 {
+		t.Fatalf("deliveries: %+v", deliveries)
+	}
+	if code := h.call("DELETE", "/api/v1/channels/"+created.ID, h.apiKey, nil, nil); code != 204 {
+		t.Fatalf("delete: %d", code)
+	}
+}
