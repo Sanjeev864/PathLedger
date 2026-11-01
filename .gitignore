@@ -24,3 +24,7 @@ agent-state/
 
 # Dashboard
 web/node_modules/
+
+# Python
+__pycache__/
+*.pyc
