@@ -24,7 +24,7 @@ const (
 	MaxTraceCount      = 5
 	DefaultTraceCount  = 3
 	// MinTraceInterval keeps path discovery to at most once a minute.
-	MinTraceInterval = 60
+	MinTraceInterval   = 60
 	MaxTargetLength    = 512
 	MaxResultsPerBatch = 500
 	MaxDetailEntries   = 32

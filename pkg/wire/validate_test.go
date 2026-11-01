@@ -39,12 +39,39 @@ func TestTestValidate(t *testing.T) {
 		{"resolver ok", func() Test { t := validTest(KindDNS, "example.com"); t.Params.Resolver = "1.1.1.1:53"; return t }(), ""},
 		{"resolver no port", func() Test { t := validTest(KindDNS, "example.com"); t.Params.Resolver = "1.1.1.1"; return t }(), "params.resolver"},
 		{"expect status ok", func() Test { t := validTest(KindHTTP, "https://x.io"); t.Params.ExpectStatus = 204; return t }(), ""},
-		{"traceroute ok", func() Test { t := validTest(KindTraceroute, "1.1.1.1"); t.IntervalSeconds = 300; t.TimeoutMillis = 1000; return t }(), ""},
-		{"traceroute too frequent", func() Test { t := validTest(KindTraceroute, "1.1.1.1"); t.IntervalSeconds = 30; t.TimeoutMillis = 500; return t }(), "interval_seconds"},
-		{"traceroute worst case too long", func() Test { t := validTest(KindTraceroute, "1.1.1.1"); t.IntervalSeconds = 60; t.TimeoutMillis = 2000; return t }(), "timeout_millis"},
-		{"traceroute max hops", func() Test { t := validTest(KindTraceroute, "1.1.1.1"); t.IntervalSeconds = 300; t.TimeoutMillis = 500; t.Params.MaxHops = 64; return t }(), "params.max_hops"},
+		{"traceroute ok", func() Test {
+			t := validTest(KindTraceroute, "1.1.1.1")
+			t.IntervalSeconds = 300
+			t.TimeoutMillis = 1000
+			return t
+		}(), ""},
+		{"traceroute too frequent", func() Test {
+			t := validTest(KindTraceroute, "1.1.1.1")
+			t.IntervalSeconds = 30
+			t.TimeoutMillis = 500
+			return t
+		}(), "interval_seconds"},
+		{"traceroute worst case too long", func() Test {
+			t := validTest(KindTraceroute, "1.1.1.1")
+			t.IntervalSeconds = 60
+			t.TimeoutMillis = 2000
+			return t
+		}(), "timeout_millis"},
+		{"traceroute max hops", func() Test {
+			t := validTest(KindTraceroute, "1.1.1.1")
+			t.IntervalSeconds = 300
+			t.TimeoutMillis = 500
+			t.Params.MaxHops = 64
+			return t
+		}(), "params.max_hops"},
 		{"max hops on icmp", func() Test { t := validTest(KindICMP, "1.1.1.1"); t.Params.MaxHops = 5; return t }(), "params.max_hops"},
-		{"traceroute count too high", func() Test { t := validTest(KindTraceroute, "1.1.1.1"); t.IntervalSeconds = 300; t.TimeoutMillis = 500; t.Params.Count = 9; return t }(), "params.count"},
+		{"traceroute count too high", func() Test {
+			t := validTest(KindTraceroute, "1.1.1.1")
+			t.IntervalSeconds = 300
+			t.TimeoutMillis = 500
+			t.Params.Count = 9
+			return t
+		}(), "params.count"},
 		{"expect status bad", func() Test { t := validTest(KindHTTP, "https://x.io"); t.Params.ExpectStatus = 42; return t }(), "params.expect_status"},
 	}
 	for _, tc := range cases {

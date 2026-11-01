@@ -91,11 +91,11 @@ func (u simUDP) WriteTo(p []byte, _ net.Addr) (int, error) {
 	return len(p), nil
 }
 func (u simUDP) ReadFrom([]byte) (int, net.Addr, error) { return 0, nil, nil }
-func (u simUDP) Close() error                            { return nil }
-func (u simUDP) LocalAddr() net.Addr                     { return &net.UDPAddr{Port: int(u.n.srcPort)} }
-func (u simUDP) SetDeadline(time.Time) error             { return nil }
-func (u simUDP) SetReadDeadline(time.Time) error         { return nil }
-func (u simUDP) SetWriteDeadline(time.Time) error        { return nil }
+func (u simUDP) Close() error                           { return nil }
+func (u simUDP) LocalAddr() net.Addr                    { return &net.UDPAddr{Port: int(u.n.srcPort)} }
+func (u simUDP) SetDeadline(time.Time) error            { return nil }
+func (u simUDP) SetReadDeadline(time.Time) error        { return nil }
+func (u simUDP) SetWriteDeadline(time.Time) error       { return nil }
 
 type simICMP struct {
 	n        *simNet
