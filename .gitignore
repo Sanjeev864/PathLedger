@@ -1,0 +1,23 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Agent state (credentials) and spool
+/var/
+agent-state/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
