@@ -31,6 +31,7 @@ const (
 	keyRequestID ctxKey = iota
 	keyTenant
 	keyAgent
+	keyAPIKey
 )
 
 var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -92,6 +93,11 @@ func requestID(r *http.Request) string {
 
 func tenantID(r *http.Request) string {
 	id, _ := r.Context().Value(keyTenant).(string)
+	return id
+}
+
+func apiKeyID(r *http.Request) string {
+	id, _ := r.Context().Value(keyAPIKey).(string)
 	return id
 }
 
@@ -174,7 +180,7 @@ func (s *Server) tenantAuth(h http.HandlerFunc) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "an API key is required (Authorization: Bearer plk_...)")
 			return
 		}
-		tenant, _, err := s.store.AuthenticateAPIKey(r.Context(), tok)
+		tenant, keyID, err := s.store.AuthenticateAPIKey(r.Context(), tok)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or revoked API key")
 			return
@@ -183,7 +189,11 @@ func (s *Server) tenantAuth(h http.HandlerFunc) http.Handler {
 			s.storeError(w, r, err, "api key")
 			return
 		}
-		h(w, r.WithContext(context.WithValue(r.Context(), keyTenant, tenant)))
+		if s.rateLimited(w, s.mgmtLimit, "tenant:"+tenant) {
+			return
+		}
+		ctx := context.WithValue(r.Context(), keyTenant, tenant)
+		h(w, r.WithContext(context.WithValue(ctx, keyAPIKey, keyID)))
 	})
 }
 
@@ -202,6 +212,9 @@ func (s *Server) agentAuth(h http.HandlerFunc) http.Handler {
 		}
 		if err != nil {
 			s.storeError(w, r, err, "agent")
+			return
+		}
+		if s.rateLimited(w, s.agentLimit, "agent:"+id.AgentID) {
 			return
 		}
 		h(w, r.WithContext(context.WithValue(r.Context(), keyAgent, id)))

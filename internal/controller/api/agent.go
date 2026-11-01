@@ -23,6 +23,9 @@ func clip(s string, n int) string {
 }
 
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
+	if s.rateLimited(w, s.enrollLimit, "ip:"+s.clientIP(r)) {
+		return
+	}
 	var req wire.EnrollRequest
 	if !decodeJSON(w, r, r.Body, &req, maxSmallBody) {
 		return

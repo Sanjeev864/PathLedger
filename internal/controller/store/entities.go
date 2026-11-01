@@ -323,3 +323,55 @@ func (s *Store) PlanFor(ctx context.Context, tenantID, siteID string) ([]wire.Te
 
 // String implements fmt.Stringer for log output without secrets.
 func (a AgentIdentity) String() string { return fmt.Sprintf("agent %s (site %s)", a.AgentID, a.SiteID) }
+
+// GetTest returns one test.
+func (s *Store) GetTest(ctx context.Context, tenantID, testID string) (Test, error) {
+	rows, err := s.pool.Query(ctx, "SELECT "+testColumns+" FROM tests WHERE tenant_id = $1 AND id = $2", tenantID, testID)
+	if err != nil {
+		return Test{}, mapErr(err)
+	}
+	t, err := pgx.CollectExactlyOneRow(rows, scanTest)
+	return t, mapErr(err)
+}
+
+// UpdateTest replaces a test's definition and enabled flag after validation.
+func (s *Store) UpdateTest(ctx context.Context, tenantID string, t Test) (Test, error) {
+	if err := t.Test.Validate(); err != nil {
+		return Test{}, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		UPDATE tests SET target = $3, interval_seconds = $4, timeout_millis = $5, params = $6, enabled = $7, updated_at = now()
+		WHERE tenant_id = $1 AND id = $2 RETURNING `+testColumns,
+		tenantID, t.ID, t.Target, t.IntervalSeconds, t.TimeoutMillis, t.Params, t.Enabled)
+	if err != nil {
+		return Test{}, mapErr(err)
+	}
+	out, err := pgx.CollectExactlyOneRow(rows, scanTest)
+	return out, mapErr(err)
+}
+
+// ListAPIKeys lists a tenant's API keys (never their secrets).
+func (s *Store) ListAPIKeys(ctx context.Context, tenantID string) ([]APIKey, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, tenant_id, name, prefix, created_at, last_used_at, revoked_at
+		FROM api_keys WHERE tenant_id = $1 ORDER BY created_at`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (APIKey, error) {
+		var k APIKey
+		err := r.Scan(&k.ID, &k.TenantID, &k.Name, &k.Prefix, &k.CreatedAt, &k.LastUsedAt, &k.RevokedAt)
+		return k, err
+	})
+}
+
+// RevokeAPIKey disables a key immediately.
+func (s *Store) RevokeAPIKey(ctx context.Context, tenantID, keyID string) error {
+	tag, err := s.pool.Exec(ctx, "UPDATE api_keys SET revoked_at = now() WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL", tenantID, keyID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

@@ -46,6 +46,7 @@ Configuration (environment):
   PATHLEDGER_LOG_LEVEL     debug, info, warn, error (default info)
   PATHLEDGER_LOG_FORMAT    json or text (default json)
   PATHLEDGER_ASN_DB        path to IPtoASN ip2asn-v4.tsv(.gz) (optional; see scripts/fetch-asn-db.sh)
+  PATHLEDGER_TRUST_PROXY   "true" when behind a reverse proxy, so rate limits use X-Forwarded-For
   PATHLEDGER_PUBLIC_URL    dashboard URL used for links in notifications (optional)
   PATHLEDGER_SMTP_HOST, _PORT (587), _USERNAME, _PASSWORD, _FROM   email notifications (optional)
   PATHLEDGER_TELEGRAM_BOT_TOKEN                                    Telegram notifications (optional)
@@ -152,6 +153,9 @@ func serve(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	go (&alert.Dispatcher{Store: st, Sender: senders, Log: log}).Run(ctx, 10*time.Second)
 
 	var opts []api.Option
+	if os.Getenv("PATHLEDGER_TRUST_PROXY") == "true" {
+		opts = append(opts, api.TrustProxyHeaders())
+	}
 	if allowPrivate {
 		opts = append(opts, api.AllowHTTPWebhooks())
 		log.Warn("PATHLEDGER_WEBHOOK_ALLOW_PRIVATE is set: webhooks may target private addresses (development only)")

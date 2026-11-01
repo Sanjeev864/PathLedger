@@ -323,3 +323,68 @@ func TestChannelsEndpoints(t *testing.T) {
 		t.Fatalf("delete: %d", code)
 	}
 }
+
+func TestPatchTestAndAPIKeys(t *testing.T) {
+	h, _ := newHarness(t)
+	var test idResp
+	h.call("POST", "/api/v1/tests", h.apiKey, map[string]any{"kind": "icmp", "target": "1.1.1.1", "interval_seconds": 30, "timeout_millis": 1000}, &test)
+	var updated struct {
+		IntervalSeconds int  `json:"interval_seconds"`
+		Enabled         bool `json:"enabled"`
+	}
+	if code := h.call("PATCH", "/api/v1/tests/"+test.ID, h.apiKey, map[string]any{"interval_seconds": 120, "enabled": false}, &updated); code != 200 || updated.IntervalSeconds != 120 || updated.Enabled {
+		t.Fatalf("patch: %d %+v", code, updated)
+	}
+	if code := h.call("PATCH", "/api/v1/tests/"+test.ID, h.apiKey, map[string]any{"interval_seconds": 1}, nil); code != 422 {
+		t.Fatalf("invalid patch accepted: %d", code)
+	}
+
+	var created struct {
+		Key   struct{ ID string } `json:"key"`
+		Token string              `json:"token"`
+	}
+	if code := h.call("POST", "/api/v1/api-keys", h.apiKey, map[string]string{"name": "dashboard"}, &created); code != 201 || !strings.HasPrefix(created.Token, "plk_") {
+		t.Fatalf("create key: %d %+v", code, created)
+	}
+	var keys struct{ Items []map[string]any }
+	if h.call("GET", "/api/v1/api-keys", created.Token, nil, &keys); len(keys.Items) != 2 {
+		t.Fatalf("list keys: %+v", keys)
+	}
+	if code := h.call("DELETE", "/api/v1/api-keys/"+created.Key.ID, created.Token, nil, nil); code != 409 {
+		t.Fatalf("self-revocation must be refused: %d", code)
+	}
+	if code := h.call("DELETE", "/api/v1/api-keys/"+created.Key.ID, h.apiKey, nil, nil); code != 204 {
+		t.Fatalf("revoke: %d", code)
+	}
+	if code := h.call("GET", "/api/v1/sites", created.Token, nil, nil); code != 401 {
+		t.Fatalf("revoked key still works: %d", code)
+	}
+}
+
+func TestRateLimits(t *testing.T) {
+	st := pgtest.New(t)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(api.New(st, log, api.WithLimits(
+		api.Limit{Rate: 0.001, Burst: 2}, api.Limit{Rate: 0.001, Burst: 3}, api.Limit{Rate: 0.001, Burst: 1},
+	)).Handler())
+	defer srv.Close()
+	tenant, _ := st.CreateTenant(context.Background(), "T")
+	_, key, _ := st.CreateAPIKey(context.Background(), tenant.ID, "k")
+	h := &harness{t: t, srv: srv, apiKey: key}
+	for i := 0; i < 3; i++ {
+		if code := h.call("GET", "/api/v1/sites", key, nil, nil); code != 200 {
+			t.Fatalf("request %d: %d", i, code)
+		}
+	}
+	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/sites", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, _ := http.DefaultClient.Do(req)
+	resp.Body.Close()
+	if resp.StatusCode != 429 || resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("expected 429 with Retry-After, got %d", resp.StatusCode)
+	}
+	h.call("POST", "/api/v1/agent/enroll", "", wire.EnrollRequest{Token: "ple_x"}, nil)
+	if code := h.call("POST", "/api/v1/agent/enroll", "", wire.EnrollRequest{Token: "ple_x"}, nil); code != 429 {
+		t.Fatalf("enrol flood not limited: %d", code)
+	}
+}

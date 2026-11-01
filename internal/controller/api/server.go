@@ -41,6 +41,11 @@ type Store interface {
 	DeleteChannel(ctx context.Context, tenantID, id string) error
 	EnqueueDeliveries(ctx context.Context, tenantID, channelID string, payload any) (int, error)
 	ListDeliveries(ctx context.Context, tenantID string, limit int) ([]store.DeliveryStatus, error)
+	GetTest(ctx context.Context, tenantID, testID string) (store.Test, error)
+	UpdateTest(ctx context.Context, tenantID string, t store.Test) (store.Test, error)
+	CreateAPIKey(ctx context.Context, tenantID, name string) (store.APIKey, string, error)
+	ListAPIKeys(ctx context.Context, tenantID string) ([]store.APIKey, error)
+	RevokeAPIKey(ctx context.Context, tenantID, keyID string) error
 }
 
 // Server serves the PathLedger API.
@@ -50,6 +55,22 @@ type Server struct {
 	now   func() time.Time
 	// allowHTTPWebhooks permits plain-http webhook URLs (development only).
 	allowHTTPWebhooks bool
+	trustProxy        bool
+
+	agentLimit, mgmtLimit, enrollLimit *limiter
+}
+
+// TrustProxyHeaders makes rate limits key on X-Forwarded-For; enable only
+// when every request arrives through a reverse proxy you control.
+func TrustProxyHeaders() Option { return func(s *Server) { s.trustProxy = true } }
+
+// WithLimits overrides the default rate limits (used by tests).
+func WithLimits(agent, management, enroll Limit) Option {
+	return func(s *Server) {
+		s.agentLimit = newLimiter(agent, s.now)
+		s.mgmtLimit = newLimiter(management, s.now)
+		s.enrollLimit = newLimiter(enroll, s.now)
+	}
 }
 
 // Option configures a Server.
@@ -61,6 +82,9 @@ func AllowHTTPWebhooks() Option { return func(s *Server) { s.allowHTTPWebhooks =
 // New returns a Server.
 func New(st Store, log *slog.Logger, opts ...Option) *Server {
 	s := &Server{store: st, log: log, now: time.Now}
+	s.agentLimit = newLimiter(limitAgent, s.now)
+	s.mgmtLimit = newLimiter(limitManagement, s.now)
+	s.enrollLimit = newLimiter(limitEnroll, s.now)
 	for _, o := range opts {
 		o(s)
 	}
@@ -88,7 +112,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/agents/{id}", s.tenantAuth(s.revokeAgent))
 	mux.Handle("GET /api/v1/tests", s.tenantAuth(s.listTests))
 	mux.Handle("POST /api/v1/tests", s.tenantAuth(s.createTest))
+	mux.Handle("PATCH /api/v1/tests/{id}", s.tenantAuth(s.updateTest))
 	mux.Handle("DELETE /api/v1/tests/{id}", s.tenantAuth(s.deleteTest))
+	mux.Handle("GET /api/v1/api-keys", s.tenantAuth(s.listAPIKeys))
+	mux.Handle("POST /api/v1/api-keys", s.tenantAuth(s.createAPIKey))
+	mux.Handle("DELETE /api/v1/api-keys/{id}", s.tenantAuth(s.revokeAPIKey))
 	mux.Handle("GET /api/v1/results", s.tenantAuth(s.queryResults))
 	mux.Handle("GET /api/v1/events", s.tenantAuth(s.listEvents))
 	mux.Handle("GET /api/v1/events/{id}", s.tenantAuth(s.getEvent))
