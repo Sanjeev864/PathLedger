@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      PATHLEDGER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify modules
+        run: go mod verify
+      - name: Lint
+        run: make lint
+      - name: Allow unprivileged ICMP for probe tests
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+      - name: Unit, integration and API tests
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: End-to-end
+        env:
+          PATHLEDGER_DATABASE_URL: postgres://postgres:postgres@localhost:5432/pathledger_e2e?sslmode=disable
+        run: |
+          psql "postgres://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE pathledger_e2e"
+          make e2e
+      - name: Cross-compile agent
+        run: make dist

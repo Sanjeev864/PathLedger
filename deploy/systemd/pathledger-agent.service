@@ -1,0 +1,41 @@
+# Install:
+#   sudo install -m 0755 pathledger-agent /usr/local/bin/
+#   sudo install -m 0644 pathledger-agent.service /etc/systemd/system/
+#   sudo install -d -m 0700 /etc/pathledger
+#   printf 'PATHLEDGER_CONTROLLER_URL=https://pathledger.example.com\nPATHLEDGER_ENROLL_TOKEN=ple_...\n' | sudo tee /etc/pathledger/agent.env
+#   sudo chmod 0600 /etc/pathledger/agent.env
+#   sudo systemctl daemon-reload && sudo systemctl enable --now pathledger-agent
+# After the first successful start the token is consumed and can be removed from agent.env.
+[Unit]
+Description=PathLedger network monitoring agent
+Documentation=https://github.com/Sanjeev864/PathLedger
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/pathledger/agent.env
+ExecStart=/usr/local/bin/pathledger-agent -state-dir ${STATE_DIRECTORY}
+DynamicUser=yes
+StateDirectory=pathledger-agent
+StateDirectoryMode=0700
+Restart=always
+RestartSec=10
+
+# ICMP falls back to raw sockets when ping sockets are not permitted.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

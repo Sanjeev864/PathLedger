@@ -176,9 +176,9 @@ func TestPlanScopingAndIngest(t *testing.T) {
 	results := []wire.Result{
 		{TestID: siteTest.ID, Time: now, Kind: wire.KindTCP, Target: "upi.example:443", Success: true, LatencyMS: wire.Float(21.5), Details: map[string]string{"remote_ip": "203.0.113.5"}},
 		{TestID: globalTest.ID, Time: now, Kind: wire.KindDNS, Target: "example.com", Success: false, ErrorClass: wire.ErrClassTimeout, Error: "i/o timeout"},
-		{TestID: otherTest.ID, Time: now, Kind: wire.KindICMP, Target: "1.1.1.1", Success: true},             // other site's test
-		{TestID: siteTest.ID, Time: now.Add(time.Hour), Kind: wire.KindTCP, Target: "x:1", Success: true},    // future timestamp
-		{TestID: siteTest.ID, Time: now, Kind: wire.KindTCP, Target: "x:1", LossPct: wire.Float(500)},         // invalid
+		{TestID: otherTest.ID, Time: now, Kind: wire.KindICMP, Target: "1.1.1.1", Success: true},          // other site's test
+		{TestID: siteTest.ID, Time: now.Add(time.Hour), Kind: wire.KindTCP, Target: "x:1", Success: true}, // future timestamp
+		{TestID: siteTest.ID, Time: now, Kind: wire.KindTCP, Target: "x:1", LossPct: wire.Float(500)},     // invalid
 	}
 	accepted, rejected, err := f.s.InsertResults(ctx, id, results)
 	if err != nil {

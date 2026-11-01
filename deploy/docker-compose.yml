@@ -1,0 +1,60 @@
+# Local development and single-VM pilot stack.
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   docker compose -f deploy/docker-compose.yml exec controller app tenant create -name "My Company"
+# For production, put the controller behind a TLS-terminating proxy (see docs/DEPLOYMENT.md)
+# and replace the default database password.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pathledger
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pathledger-dev-only}
+      POSTGRES_DB: pathledger
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pathledger -d pathledger"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  controller:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        BINARY: pathledger-controller
+    command: ["serve"]
+    environment:
+      PATHLEDGER_DATABASE_URL: postgres://pathledger:${POSTGRES_PASSWORD:-pathledger-dev-only}@db:5432/pathledger?sslmode=disable
+      PATHLEDGER_LISTEN_ADDR: ":8080"
+      PATHLEDGER_LOG_LEVEL: ${PATHLEDGER_LOG_LEVEL:-info}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Optional local agent for trying the product end to end:
+  #   PATHLEDGER_ENROLL_TOKEN=ple_... docker compose -f deploy/docker-compose.yml --profile agent up -d agent
+  agent:
+    profiles: ["agent"]
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        BINARY: pathledger-agent
+    command: ["-controller", "http://controller:8080", "-state-dir", "/var/lib/pathledger-agent"]
+    environment:
+      PATHLEDGER_ENROLL_TOKEN: ${PATHLEDGER_ENROLL_TOKEN:-}
+    volumes:
+      - agent-state:/var/lib/pathledger-agent
+    depends_on:
+      - controller
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  agent-state:
