@@ -66,6 +66,35 @@ docker run -d --name pathledger-agent --restart unless-stopped \
 Docker allows unprivileged ICMP sockets inside containers by default, so no
 extra capabilities are required.
 
+## Agent updates
+
+Agents update themselves only to releases signed with **your** release key.
+The controller relays files; it cannot sign, so a compromised controller
+cannot push code to customer networks.
+
+1. **Once, on a trusted machine** (not the controller):
+   `go build -o pathledger-release ./cmd/pathledger-release && ./pathledger-release keygen -out release.key`.
+   Keep `release.key` offline with a backup; note the printed public key.
+2. **Agents**: set `PATHLEDGER_UPDATE_PUBLIC_KEY=<public key>` in
+   `/etc/pathledger/agent.env` (or `-update-key`). Without it agents never
+   update. Several keys, comma-separated, allow a key rollover.
+3. **Each release**: `make dist VERSION=v0.3.0`, then
+   `./pathledger-release sign -key release.key -version v0.3.0 -dir dist` and
+   `./pathledger-release verify -pub <public key> -dir dist`.
+4. **Publish**: copy `dist/` to the controller and set
+   `PATHLEDGER_AGENT_RELEASES_DIR` to it (plus `PATHLEDGER_UPDATE_PUBLIC_KEY`
+   so the controller refuses a release you did not sign). Replacing the
+   directory's contents publishes a new release; no restart is needed.
+
+Agents check within a minute, install, and restart in place. The dashboard
+shows each agent's version on its site page. A release that fails to start
+three times on a device is rolled back there and skipped.
+
+**Credential rotation.** Agents replace their credential every 30 days
+(`PATHLEDGER_AGENT_TOKEN_MAX_AGE`), and immediately when you press
+*Rotate credential* on the site page — for example after a device was
+serviced by a third party. *Revoke* disables an agent permanently.
+
 ## Monitoring the controller
 
 Metrics exposed on `PATHLEDGER_METRICS_ADDR`:
@@ -94,5 +123,6 @@ Suggested alerts: analytics last success older than 5 minutes; any
 - [x] Rate limiting per credential
 - [x] Prometheus metrics (alerting rules are the operator's)
 - [x] Data retention job
-- [ ] Mutual TLS for agents and signed agent updates
+- [x] Agent credential rotation and signed agent updates
+- [ ] Mutual TLS for agents (enterprise option; see ARCHITECTURE.md)
 - [ ] Documented incident and data-retention policies (DPDP Act)

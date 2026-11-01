@@ -92,6 +92,22 @@ func (t Test) Timeout() time.Duration { return time.Duration(t.TimeoutMillis) * 
 type Plan struct {
 	Tests       []Test    `json:"tests"`
 	GeneratedAt time.Time `json:"generated_at"`
+	// RotateCredential asks the agent to obtain a new credential
+	// (POST /api/v1/agent/credential) and use it from then on.
+	RotateCredential bool `json:"rotate_credential,omitempty"`
+	// Update announces a signed release newer than nothing in particular;
+	// the agent decides, after verifying the signature, whether to install.
+	Update *UpdateHint `json:"update,omitempty"`
+}
+
+// UpdateHint names the release the controller is distributing.
+type UpdateHint struct {
+	Version string `json:"version"`
+}
+
+// CredentialResponse carries a rotated agent credential.
+type CredentialResponse struct {
+	AgentToken string `json:"agent_token"`
 }
 
 // Result is the outcome of a single probe run.

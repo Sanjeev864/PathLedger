@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,9 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/sanjeev864/pathledger/internal/probe"
+	"github.com/sanjeev864/pathledger/internal/update"
 	"github.com/sanjeev864/pathledger/pkg/wire"
 )
 
@@ -32,6 +35,9 @@ type Config struct {
 	HTTPClient *http.Client
 	// Runner executes tests; nil uses the built-in probes.
 	Runner RunFunc
+	// UpdateKeys are the trusted release-signing keys. Without any, the agent
+	// never installs updates.
+	UpdateKeys []ed25519.PublicKey
 }
 
 // Defaults.
@@ -41,6 +47,7 @@ const (
 	DefaultSpoolMaxBytes  = 64 << 20
 	DefaultMaxConcurrency = 8
 	maxBackoff            = 5 * time.Minute
+	updateRetry           = 10 * time.Minute
 	shutdownFlushTimeout  = 5 * time.Second
 )
 
@@ -75,7 +82,7 @@ func (c *Config) setDefaults() {
 type Agent struct {
 	cfg    Config
 	log    *slog.Logger
-	client *Client
+	client atomic.Pointer[Client] // replaced when the credential rotates
 	spool  *Spool
 	sched  *Scheduler
 	state  State
@@ -117,7 +124,8 @@ func New(ctx context.Context, cfg Config, log *slog.Logger) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Agent{cfg: cfg, log: log.With("agent_id", state.AgentID), client: client.WithToken(state.AgentToken), spool: spool, state: state}
+	a := &Agent{cfg: cfg, log: log.With("agent_id", state.AgentID), spool: spool, state: state}
+	a.client.Store(client.WithToken(state.AgentToken))
 	a.sched = NewScheduler(cfg.Runner, a.store, cfg.MaxConcurrency, a.log)
 	return a, nil
 }
@@ -150,6 +158,28 @@ func enroll(ctx context.Context, cfg Config, log *slog.Logger) (State, error) {
 	}
 	log.Info("enrolled with controller", "agent_id", st.AgentID, "site_id", st.SiteID)
 	return st, nil
+}
+
+// api returns the client with the current credential.
+func (a *Agent) api() *Client { return a.client.Load() }
+
+// rotateCredential obtains a new credential and saves it before using it.
+// If saving fails the old credential stays in use (the controller keeps it
+// valid until the new one is first presented).
+func (a *Agent) rotateCredential(ctx context.Context) error {
+	resp, err := a.api().RotateCredential(ctx)
+	if err != nil {
+		return err
+	}
+	next := a.state
+	next.AgentToken = resp.AgentToken
+	if err := SaveState(statePath(a.cfg.StateDir), next); err != nil {
+		return fmt.Errorf("saving rotated credential: %w", err)
+	}
+	a.state = next
+	a.client.Store(a.api().WithToken(resp.AgentToken))
+	a.log.Info("agent credential rotated")
+	return nil
 }
 
 // ID returns the agent's identifier.
@@ -194,18 +224,62 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 func (a *Agent) planLoop(ctx context.Context) error {
-	var etag string
-	failures := 0
+	var (
+		etag          string
+		failures      int
+		healthy       bool
+		rotate        bool   // from the last full plan
+		announced     string // release version from the last full plan
+		nextRotate    time.Time
+		nextUpdate    time.Time
+		updatesWarned bool
+	)
 	for {
-		plan, newETag, notModified, err := a.client.Plan(ctx, etag)
+		plan, newETag, notModified, err := a.api().Plan(ctx, etag)
 		wait := a.cfg.PlanRefresh
 		switch {
 		case err == nil:
 			failures = 0
+			if !healthy {
+				markHealthy(a.cfg.StateDir)
+				healthy = true
+			}
 			if !notModified {
 				etag = newETag
 				a.sched.Apply(ctx, plan.Tests)
 				a.log.Info("test plan applied", "tests", a.sched.Active())
+				rotate, announced = plan.RotateCredential, ""
+				if plan.Update != nil {
+					announced = plan.Update.Version
+				}
+			}
+			now := time.Now()
+			if rotate && !now.Before(nextRotate) {
+				if err := a.rotateCredential(ctx); err != nil {
+					a.log.Warn("credential rotation failed; will retry", "error", err)
+					nextRotate = now.Add(updateRetry)
+				} else {
+					rotate, etag = false, "" // refetch the plan with the new credential
+				}
+			}
+			if announced != "" && update.Newer(announced, a.cfg.Version) && !now.Before(nextUpdate) {
+				if len(a.cfg.UpdateKeys) == 0 {
+					if !updatesWarned {
+						a.log.Info("a newer agent release is available; automatic updates are off (no update public key configured)", "version", announced)
+						updatesWarned = true
+					}
+				} else {
+					ok, err := a.installUpdate(ctx, announced)
+					switch {
+					case err != nil:
+						a.log.Warn("installing agent update failed; will retry", "version", announced, "error", err)
+						nextUpdate = now.Add(updateRetry)
+					case ok:
+						return ErrUpdateInstalled
+					default:
+						nextUpdate = now.Add(updateRetry)
+					}
+				}
 			}
 		case IsUnauthorized(err):
 			return ErrRevoked
@@ -253,7 +327,7 @@ func (a *Agent) flush(ctx context.Context) error {
 			return err
 		}
 		if len(seg.Results) > 0 {
-			resp, err := a.client.Upload(ctx, seg.Results)
+			resp, err := a.api().Upload(ctx, seg.Results)
 			switch {
 			case IsUnauthorized(err):
 				return ErrRevoked

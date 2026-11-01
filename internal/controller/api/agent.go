@@ -8,8 +8,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/sanjeev864/pathledger/internal/controller/releases"
 	"github.com/sanjeev864/pathledger/internal/controller/store"
 	"github.com/sanjeev864/pathledger/pkg/wire"
 )
@@ -47,8 +50,9 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 
 // planETag is a strong validator over the plan's content, so agents only
 // download and re-apply a plan when it actually changed.
-func planETag(tests []wire.Test) (string, error) {
-	b, err := json.Marshal(tests)
+func planETag(p wire.Plan) (string, error) {
+	p.GeneratedAt = time.Time{}
+	b, err := json.Marshal(p)
 	if err != nil {
 		return "", err
 	}
@@ -66,7 +70,20 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 	if tests == nil {
 		tests = []wire.Test{}
 	}
-	etag, err := planETag(tests)
+	if v, ok := agentVersion(r.UserAgent()); ok {
+		if err := s.store.SetAgentVersion(r.Context(), id.AgentID, v); err != nil {
+			s.log.WarnContext(r.Context(), "recording agent version failed", "error", err)
+		}
+	}
+	p := wire.Plan{Tests: tests, RotateCredential: s.now().Sub(id.TokenRotatedAt) > s.agentTokenMaxAge}
+	if s.releases != nil {
+		if rel, err := s.releases.Current(); err != nil {
+			s.log.ErrorContext(r.Context(), "agent release directory is unusable; not offering updates", "error", err)
+		} else if rel != nil {
+			p.Update = &wire.UpdateHint{Version: rel.Manifest.Version}
+		}
+	}
+	etag, err := planETag(p)
 	if err != nil {
 		s.storeError(w, r, err, "plan")
 		return
@@ -76,7 +93,85 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	writeJSON(w, http.StatusOK, wire.Plan{Tests: tests, GeneratedAt: s.now().UTC()})
+	p.GeneratedAt = s.now().UTC()
+	writeJSON(w, http.StatusOK, p)
+}
+
+// agentVersion extracts the version from "PathLedger-Agent/<version> (...)".
+func agentVersion(ua string) (string, bool) {
+	rest, ok := strings.CutPrefix(ua, "PathLedger-Agent/")
+	if !ok {
+		return "", false
+	}
+	v, _, _ := strings.Cut(rest, " ")
+	if v == "" || len(v) > 64 {
+		return "", false
+	}
+	for _, c := range v {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '.' || c == '-' || c == '+' || c == '_') {
+			return "", false
+		}
+	}
+	return v, true
+}
+
+// rotateCredential issues the calling agent a new credential. The old one
+// stays valid until the new one is first used.
+func (s *Server) rotateCredential(w http.ResponseWriter, r *http.Request) {
+	id := agentIdentity(r)
+	token, err := s.store.RotateAgentToken(r.Context(), id.AgentID)
+	if err != nil {
+		s.storeError(w, r, err, "agent")
+		return
+	}
+	s.log.InfoContext(r.Context(), "agent credential rotated", "agent_id", id.AgentID)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, wire.CredentialResponse{AgentToken: token})
+}
+
+func (s *Server) currentRelease(w http.ResponseWriter, r *http.Request) *releases.Release {
+	if s.releases == nil {
+		writeError(w, http.StatusNotFound, "not_found", "this controller does not distribute agent updates")
+		return nil
+	}
+	rel, err := s.releases.Current()
+	if err != nil || rel == nil {
+		writeError(w, http.StatusNotFound, "not_found", "no agent release is published")
+		return nil
+	}
+	return rel
+}
+
+func (s *Server) updateManifest(w http.ResponseWriter, r *http.Request) {
+	if rel := s.currentRelease(w, r); rel != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(rel.Raw)
+	}
+}
+
+func (s *Server) updateSignature(w http.ResponseWriter, r *http.Request) {
+	if rel := s.currentRelease(w, r); rel != nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(rel.Signature))
+	}
+}
+
+func (s *Server) updateFile(w http.ResponseWriter, r *http.Request) {
+	if s.releases == nil {
+		writeError(w, http.StatusNotFound, "not_found", "this controller does not distribute agent updates")
+		return
+	}
+	f, size, err := s.releases.Open(r.PathValue("name"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "no such release file")
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	if _, err := io.CopyN(w, f, size); err != nil {
+		s.log.WarnContext(r.Context(), "sending release file failed", "error", err)
+	}
 }
 
 func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/sanjeev864/pathledger/internal/controller/releases"
 	"github.com/sanjeev864/pathledger/internal/controller/store"
 	"github.com/sanjeev864/pathledger/internal/controller/webui"
 	"github.com/sanjeev864/pathledger/internal/metrics"
@@ -31,6 +32,9 @@ type Store interface {
 	CreateEnrollmentToken(ctx context.Context, tenantID, siteID string, ttl time.Duration) (store.EnrollmentToken, string, error)
 	ListAgents(ctx context.Context, tenantID string) ([]store.Agent, error)
 	RevokeAgent(ctx context.Context, tenantID, agentID string) error
+	RotateAgentToken(ctx context.Context, agentID string) (string, error)
+	RequestAgentRotation(ctx context.Context, tenantID, agentID string) error
+	SetAgentVersion(ctx context.Context, agentID, version string) error
 	CreateTest(ctx context.Context, tenantID string, siteID *string, t wire.Test) (store.Test, error)
 	ListTests(ctx context.Context, tenantID string) ([]store.Test, error)
 	DeleteTest(ctx context.Context, tenantID, testID string) error
@@ -86,9 +90,23 @@ type Server struct {
 	mailer    Mailer
 	publicURL string
 
+	agentTokenMaxAge time.Duration
+	releases         *releases.Source
+
 	httpMetrics     *metrics.Vec
 	ingestedResults *metrics.Counter
 	rejectedResults *metrics.Counter
+}
+
+// WithAgentTokenMaxAge sets how old an agent credential may get before the
+// agent is asked to rotate it (default 30 days).
+func WithAgentTokenMaxAge(d time.Duration) Option {
+	return func(s *Server) { s.agentTokenMaxAge = d }
+}
+
+// WithReleases publishes signed agent releases from src.
+func WithReleases(src *releases.Source) Option {
+	return func(s *Server) { s.releases = src }
 }
 
 // WithMetrics records request and ingest metrics in reg.
@@ -122,7 +140,7 @@ func AllowHTTPWebhooks() Option { return func(s *Server) { s.allowHTTPWebhooks =
 
 // New returns a Server.
 func New(st Store, log *slog.Logger, opts ...Option) *Server {
-	s := &Server{store: st, log: log, now: time.Now}
+	s := &Server{store: st, log: log, now: time.Now, agentTokenMaxAge: 30 * 24 * time.Hour}
 	s.agentLimit = newLimiter(limitAgent, s.now)
 	s.mgmtLimit = newLimiter(limitManagement, s.now)
 	s.enrollLimit = newLimiter(limitEnroll, s.now)
@@ -144,6 +162,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/enroll", s.enroll)
 	mux.Handle("GET /api/v1/agent/plan", s.agentAuth(s.plan))
 	mux.Handle("POST /api/v1/agent/results", s.agentAuth(s.ingest))
+	mux.Handle("POST /api/v1/agent/credential", s.agentAuth(s.rotateCredential))
+	mux.Handle("GET /api/v1/agent/update/manifest.json", s.agentAuth(s.updateManifest))
+	mux.Handle("GET /api/v1/agent/update/manifest.json.sig", s.agentAuth(s.updateSignature))
+	mux.Handle("GET /api/v1/agent/update/files/{name}", s.agentAuth(s.updateFile))
 
 	// Management API.
 	mux.Handle("GET /api/v1/sites", s.read(s.listSites))
@@ -152,6 +174,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/sites/{id}/enrollment-tokens", s.write(s.createEnrollmentToken))
 	mux.Handle("GET /api/v1/agents", s.read(s.listAgents))
 	mux.Handle("DELETE /api/v1/agents/{id}", s.write(s.revokeAgent))
+	mux.Handle("POST /api/v1/agents/{id}/rotate-credential", s.write(s.requestAgentRotation))
 	mux.Handle("GET /api/v1/tests", s.read(s.listTests))
 	mux.Handle("POST /api/v1/tests", s.write(s.createTest))
 	mux.Handle("PATCH /api/v1/tests/{id}", s.write(s.updateTest))

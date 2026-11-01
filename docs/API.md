@@ -125,8 +125,36 @@ nothing changed.
 ```json
 {"tests": [{"id": "…", "kind": "tcp", "target": "upi.example:443", "interval_seconds": 30,
             "timeout_millis": 2000, "params": {}}],
- "generated_at": "2026-11-01T10:00:00Z"}
+ "generated_at": "2026-11-01T10:00:00Z",
+ "rotate_credential": true,
+ "update": {"version": "v0.3.0"}}
 ```
+
+`rotate_credential` appears when the agent's credential is older than
+`PATHLEDGER_AGENT_TOKEN_MAX_AGE` (default 30 days) or an admin asked for a
+rotation. `update` appears when the controller distributes a signed release;
+it is only a hint — the agent verifies the signed manifest itself. The
+controller records the version from the agent's `User-Agent`
+(`PathLedger-Agent/<version> (os/arch)`).
+
+### `POST /api/v1/agent/credential`
+
+Returns a new credential, `{"agent_token": "pla_…"}`. The agent saves it,
+then uses it; the first request made with it retires the old credential. Until
+then the old credential keeps working, so an agent that crashes before saving
+the new one is not locked out. Calling again replaces an unused new
+credential.
+
+### Agent updates
+
+| Path | Response |
+| --- | --- |
+| `GET /api/v1/agent/update/manifest.json` | The signed release manifest, byte for byte |
+| `GET /api/v1/agent/update/manifest.json.sig` | Base64 ed25519 signature over those bytes |
+| `GET /api/v1/agent/update/files/{name}` | A binary listed in the manifest |
+
+All three require an agent credential and return 404 when no release is
+published. See [DEPLOYMENT.md](DEPLOYMENT.md#agent-updates) for the trust model.
 
 ### `POST /api/v1/agent/results`
 
@@ -171,6 +199,7 @@ timestamp is more than 5 minutes in the future or 30 days in the past.
 | --- | --- | --- |
 | `GET` | `/api/v1/agents` | `{"items": [{"id", "site_id", "hostname", "version", "os", "arch", "created_at", "last_seen_at", "revoked_at"}]}` |
 | `DELETE` | `/api/v1/agents/{id}` | `204`; the agent's credential stops working immediately |
+| `POST` | `/api/v1/agents/{id}/rotate-credential` | `202`; the agent replaces its credential at its next plan fetch (within about a minute) |
 
 ### Tests
 

@@ -322,3 +322,51 @@ func TestSLAReportData(t *testing.T) {
 		t.Fatalf("unknown tenant: %v", err)
 	}
 }
+
+func TestAgentTokenRotation(t *testing.T) {
+	f := setup(t)
+	agent := enroll(t, f, f.site.ID)
+	old, err := f.s.AuthenticateAgent(ctx, agent.AgentToken)
+	if err != nil || time.Since(old.TokenRotatedAt) > time.Minute {
+		t.Fatalf("auth: %+v %v", old, err)
+	}
+	lost, _ := f.s.RotateAgentToken(ctx, agent.AgentID)
+	fresh, err := f.s.RotateAgentToken(ctx, agent.AgentID) // replaces the unused one
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.AuthenticateAgent(ctx, lost); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("replaced pending token still works: %v", err)
+	}
+	// Until the new token is used, the old one keeps working.
+	if _, err := f.s.AuthenticateAgent(ctx, agent.AgentToken); err != nil {
+		t.Fatalf("old token before promotion: %v", err)
+	}
+	id, err := f.s.AuthenticateAgent(ctx, fresh)
+	if err != nil || id.AgentID != agent.AgentID || !id.TokenRotatedAt.After(old.TokenRotatedAt) {
+		t.Fatalf("new token: %+v %v", id, err)
+	}
+	if _, err := f.s.AuthenticateAgent(ctx, agent.AgentToken); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old token after promotion: %v", err)
+	}
+	if _, err := f.s.AuthenticateAgent(ctx, fresh); err != nil {
+		t.Fatalf("new token second use: %v", err)
+	}
+
+	if err := f.s.RequestAgentRotation(ctx, f.tenant.ID, agent.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := f.s.AuthenticateAgent(ctx, fresh); id.TokenRotatedAt.Year() != 1970 {
+		t.Fatalf("rotation not requested: %v", id.TokenRotatedAt)
+	}
+	if err := f.s.RequestAgentRotation(ctx, "00000000-0000-0000-0000-000000000000", agent.AgentID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-tenant request: %v", err)
+	}
+	_ = f.s.RevokeAgent(ctx, f.tenant.ID, agent.AgentID)
+	if _, err := f.s.RotateAgentToken(ctx, agent.AgentID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("revoked agent rotated: %v", err)
+	}
+	if err := f.s.SetAgentVersion(ctx, agent.AgentID, "v0.3.0"); err != nil {
+		t.Fatal(err)
+	}
+}

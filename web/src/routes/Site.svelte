@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { get, ago, duration, targetLabel, type List, type Site, type Test, type Result, type PathEvent, type SeriesPoint, type Agent } from '../lib/api'
+  import { api, canWrite, get, ago, duration, targetLabel, type List, type Site, type Test, type Result, type PathEvent, type SeriesPoint, type Agent } from '../lib/api'
   import Status from '../lib/Status.svelte'
   import Chart from '../lib/Chart.svelte'
   import PathView from '../lib/PathView.svelte'
+  import { session } from '../lib/session.svelte'
 
   let { id }: { id: string } = $props()
 
@@ -58,6 +59,26 @@
   $effect(() => {
     loadSeries(selected, windowLen)
   })
+
+  const writable = $derived(canWrite(session.me))
+  let confirmRevoke = $state('')
+  let agentNote = $state('')
+
+  async function agentAction(a: Agent, action: 'rotate' | 'revoke') {
+    try {
+      if (action === 'rotate') {
+        await api('POST', `/api/v1/agents/${a.id}/rotate-credential`)
+        agentNote = `${a.hostname || 'Agent'} will replace its credential within a minute.`
+      } else {
+        await api('DELETE', `/api/v1/agents/${a.id}`)
+        agentNote = `${a.hostname || 'Agent'} was revoked; it can no longer report.`
+        confirmRevoke = ''
+        await load()
+      }
+    } catch (err) {
+      agentNote = (err as Error).message
+    }
+  }
 
   const openEvent = $derived(events.find((e) => e.state === 'open'))
   const selectedTest = $derived(tests.find((t) => t.id === selected))
@@ -152,6 +173,39 @@
         </table>
       {/if}
     </section>
+
+    {#if agents.length > 0}
+      <section class="panel stack">
+        <h2>Agents</h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Host</th><th>Version</th><th>Platform</th><th>Last report</th>{#if writable}<th></th>{/if}</tr></thead>
+            <tbody>
+              {#each agents as a}
+                <tr>
+                  <td>{a.hostname || '—'}</td>
+                  <td class="mono">{a.version || '—'}</td>
+                  <td class="mono">{a.os}/{a.arch}</td>
+                  <td>{ago(a.last_seen_at)}</td>
+                  {#if writable}
+                    <td class="actions">
+                      <button onclick={() => agentAction(a, 'rotate')} title="Issue this agent a new credential">Rotate credential</button>
+                      {#if confirmRevoke === a.id}
+                        <button class="danger" onclick={() => agentAction(a, 'revoke')}>Confirm revoke</button>
+                        <button onclick={() => (confirmRevoke = '')}>Cancel</button>
+                      {:else}
+                        <button onclick={() => (confirmRevoke = a.id)}>Revoke</button>
+                      {/if}
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {#if agentNote}<p class="muted small">{agentNote}</p>{/if}
+      </section>
+    {/if}
   </div>
 {:else if error}
   <p class="error">{error}</p>
@@ -165,4 +219,8 @@
   tr.sel td { background: color-mix(in srgb, var(--accent) 9%, transparent); }
   .small { font-size: 0.85rem; }
   p { margin: 0; }
+  .scroll { overflow-x: auto; }
+  .actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+  .actions button { padding: 4px 10px; font-size: 0.85rem; }
+  button.danger { color: var(--bad); border-color: var(--bad); }
 </style>

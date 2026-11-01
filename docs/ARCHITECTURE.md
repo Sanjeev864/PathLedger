@@ -52,6 +52,36 @@ upload loop ◄──(every 15 s)── Spool (JSON-lines segments, fsync, size 
 * **Uploader**: retries with exponential backoff and jitter (max 5 min). A
   batch the controller permanently rejects (4xx) is discarded so it cannot
   block newer data. A `401` stops the agent: its credential was revoked.
+* **Credential rotation**: when the plan says `rotate_credential`, the agent
+  requests a new token, writes it to `agent.json` (atomic rename), then uses
+  it. The controller keeps the old token valid until the new one is first
+  presented, so no crash point can lock the agent out. Policy (30 days by
+  default, or on demand from the dashboard) lives on the controller.
+* **Signed self-update** (opt-in with `PATHLEDGER_UPDATE_PUBLIC_KEY`):
+
+  ```
+  release machine: pathledger-release sign ── manifest.json + .sig + binaries
+                                                    │ (copied to the controller)
+  controller: relays files, announces version ──► agent plan loop
+  agent: verify ed25519 signature with pinned key → version strictly newer →
+         download binary for its OS/arch/variant → SHA-256 from signed manifest →
+         write <state>/bin/pathledger-agent-<ver>, commit manifest last →
+         graceful stop (flush spool) → exec new binary (same PID)
+  next start: installed binary re-verifies <state>/bin and execs the newer one;
+              3 starts without a successful plan fetch ⇒ version marked bad,
+              fall back to the installed binary
+  ```
+
+  The signing key never touches the controller, so a compromised controller,
+  proxy or mirror can at worst withhold updates. Only final `vX.Y.Z` releases
+  install, and never downgrades. Binaries live in the agent's state directory
+  because the systemd unit makes the rest of the filesystem read-only.
+* **Why not mutual TLS (yet)**: agents authenticate with 256-bit bearer
+  tokens over TLS, stored hashed (SHA-256) on the controller and rotated as
+  above. Mutual TLS adds little while TLS terminates at a reverse proxy or CDN
+  (Caddy, Cloudflare), which is the recommended deployment; it would need
+  certificate forwarding and a private CA. It is listed as an enterprise
+  option for customers who run the controller with direct TLS.
 
 ### Probes
 

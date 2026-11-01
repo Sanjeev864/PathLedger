@@ -31,10 +31,12 @@ import (
 	"github.com/sanjeev864/pathledger/internal/controller/api"
 	"github.com/sanjeev864/pathledger/internal/controller/auth"
 	"github.com/sanjeev864/pathledger/internal/controller/maintenance"
+	"github.com/sanjeev864/pathledger/internal/controller/releases"
 	"github.com/sanjeev864/pathledger/internal/controller/store"
 	"github.com/sanjeev864/pathledger/internal/enrich"
 	"github.com/sanjeev864/pathledger/internal/logging"
 	"github.com/sanjeev864/pathledger/internal/metrics"
+	"github.com/sanjeev864/pathledger/internal/update"
 )
 
 const usage = `Usage: pathledger-controller <command> [flags]
@@ -57,6 +59,9 @@ Configuration (environment):
   PATHLEDGER_TRUST_PROXY   "true" when behind a reverse proxy, so rate limits use X-Forwarded-For
   PATHLEDGER_ANALYTICS_WINDOW, _INTERVAL   evaluation window (5m) and frequency (1m)
   PATHLEDGER_RETENTION_DAYS   days of raw results to keep (default 90)
+  PATHLEDGER_AGENT_RELEASES_DIR  directory with a release signed by pathledger-release (off by default)
+  PATHLEDGER_UPDATE_PUBLIC_KEY   release public key(s); refuse releases they did not sign
+  PATHLEDGER_AGENT_TOKEN_MAX_AGE agents rotate credentials older than this (default 720h)
   PATHLEDGER_METRICS_ADDR     address for Prometheus /metrics, e.g. 127.0.0.1:9090 (off by default)
   PATHLEDGER_PUBLIC_URL    dashboard URL used for links in notifications (optional)
   PATHLEDGER_SMTP_HOST, _PORT (587), _USERNAME, _PASSWORD, _FROM   email notifications (optional)
@@ -212,6 +217,28 @@ func serve(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	}
 
 	opts := []api.Option{api.WithMetrics(reg)}
+	if v := os.Getenv("PATHLEDGER_AGENT_TOKEN_MAX_AGE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Hour {
+			return errors.New("PATHLEDGER_AGENT_TOKEN_MAX_AGE must be a duration of at least 1h, e.g. 720h")
+		}
+		opts = append(opts, api.WithAgentTokenMaxAge(d))
+	}
+	if dir := os.Getenv("PATHLEDGER_AGENT_RELEASES_DIR"); dir != "" {
+		keys, err := update.ParsePublicKeys(os.Getenv("PATHLEDGER_UPDATE_PUBLIC_KEY"))
+		if err != nil {
+			return err
+		}
+		if len(keys) == 0 {
+			log.Warn("PATHLEDGER_UPDATE_PUBLIC_KEY not set; release signatures are checked only by agents")
+		}
+		src, err := releases.New(dir, keys)
+		if err != nil {
+			return fmt.Errorf("agent releases in %s: %w", dir, err)
+		}
+		opts = append(opts, api.WithReleases(src))
+		log.Info("distributing agent releases", "dir", dir)
+	}
 	if u := os.Getenv("PATHLEDGER_PUBLIC_URL"); u != "" {
 		opts = append(opts, api.WithPublicURL(u))
 	}

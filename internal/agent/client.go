@@ -138,6 +138,43 @@ func (c *Client) Upload(ctx context.Context, results []wire.Result) (wire.Ingest
 	return out, decode(resp, &out)
 }
 
+// RotateCredential asks the controller for a new agent credential.
+func (c *Client) RotateCredential(ctx context.Context) (wire.CredentialResponse, error) {
+	var out wire.CredentialResponse
+	resp, err := c.do(ctx, http.MethodPost, "/api/v1/agent/credential", nil, nil)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if err := decode(resp, &out); err != nil {
+		return out, err
+	}
+	if !strings.HasPrefix(out.AgentToken, "pla_") {
+		return out, errors.New("controller returned a malformed credential")
+	}
+	return out, nil
+}
+
+// Download streams path into w, failing if the body exceeds limit bytes.
+func (c *Client) Download(ctx context.Context, path string, w io.Writer, limit int64) (int64, error) {
+	resp, err := c.do(ctx, http.MethodGet, path, nil, http.Header{"Accept": {"*/*"}})
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, decode(resp, &struct{}{})
+	}
+	n, err := io.Copy(w, io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return n, fmt.Errorf("downloading %s: %w", path, err)
+	}
+	if n > limit {
+		return n, fmt.Errorf("%s is larger than %d bytes", path, limit)
+	}
+	return n, nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, h http.Header) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.base.String()+path, body)
 	if err != nil {
@@ -149,7 +186,9 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, h 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Accept", "application/json")
+	if req.Header.Get("Accept") == "" {
+		req.Header.Set("Accept", "application/json")
+	}
 	req.Header.Set("User-Agent", c.userAgent)
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)

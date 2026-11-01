@@ -6,6 +6,8 @@
 #   sudo chmod 0600 /etc/pathledger/agent.env
 #   sudo systemctl daemon-reload && sudo systemctl enable --now pathledger-agent
 # After the first successful start the token is consumed and can be removed from agent.env.
+# Optional: add PATHLEDGER_UPDATE_PUBLIC_KEY=<release public key> to agent.env to allow
+# signed self-updates (binaries are kept in the state directory, which stays writable).
 [Unit]
 Description=PathLedger network monitoring agent
 Documentation=https://github.com/Sanjeev864/PathLedger

@@ -74,6 +74,8 @@ type AgentIdentity struct {
 	AgentID  string
 	TenantID string
 	SiteID   string
+	// TokenRotatedAt is when the agent's current credential was issued.
+	TokenRotatedAt time.Time
 }
 
 // CreateTenant creates a tenant.
@@ -216,14 +218,60 @@ func (s *Store) AuthenticateAgent(ctx context.Context, token string) (AgentIdent
 	if _, err := auth.Parse(token, auth.PrefixAgent); err != nil {
 		return id, ErrNotFound
 	}
+	// The first use of a pending (rotated) token promotes it and retires
+	// the old one. All CASE expressions see the row's old values.
 	err := s.pool.QueryRow(ctx,
-		`UPDATE agents SET last_seen_at = CASE
-		     WHEN last_seen_at IS NULL OR last_seen_at < now() - interval '30 seconds' THEN now()
-		     ELSE last_seen_at END
-		 WHERE token_hash = $1 AND revoked_at IS NULL
-		 RETURNING id, tenant_id, site_id`, auth.Hash(token),
-	).Scan(&id.AgentID, &id.TenantID, &id.SiteID)
+		`UPDATE agents SET
+		     last_seen_at = CASE
+		         WHEN last_seen_at IS NULL OR last_seen_at < now() - interval '30 seconds' THEN now()
+		         ELSE last_seen_at END,
+		     token_hash = CASE WHEN pending_token_hash = $1 THEN pending_token_hash ELSE token_hash END,
+		     token_rotated_at = CASE WHEN pending_token_hash = $1 THEN now() ELSE token_rotated_at END,
+		     pending_token_hash = CASE WHEN pending_token_hash = $1 THEN NULL ELSE pending_token_hash END
+		 WHERE (token_hash = $1 OR pending_token_hash = $1) AND revoked_at IS NULL
+		 RETURNING id, tenant_id, site_id, token_rotated_at`, auth.Hash(token),
+	).Scan(&id.AgentID, &id.TenantID, &id.SiteID, &id.TokenRotatedAt)
 	return id, mapErr(err)
+}
+
+// RotateAgentToken issues a new credential for an agent. It becomes the
+// agent's only credential the first time it is used; until then the current
+// one keeps working. Calling it again replaces an unused pending token.
+func (s *Store) RotateAgentToken(ctx context.Context, agentID string) (string, error) {
+	token, hash, err := auth.Generate(auth.PrefixAgent)
+	if err != nil {
+		return "", err
+	}
+	tag, err := s.pool.Exec(ctx,
+		"UPDATE agents SET pending_token_hash = $2 WHERE id = $1 AND revoked_at IS NULL", agentID, hash)
+	if err != nil {
+		return "", mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return "", ErrNotFound
+	}
+	return token, nil
+}
+
+// RequestAgentRotation makes the agent rotate its credential at its next
+// plan fetch (for example after a device was handled by a third party).
+func (s *Store) RequestAgentRotation(ctx context.Context, tenantID, agentID string) error {
+	tag, err := s.pool.Exec(ctx,
+		"UPDATE agents SET token_rotated_at = 'epoch' WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL", tenantID, agentID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetAgentVersion records the version an agent reports (it changes after a
+// self-update). It writes only when the value differs.
+func (s *Store) SetAgentVersion(ctx context.Context, agentID, version string) error {
+	_, err := s.pool.Exec(ctx, "UPDATE agents SET version = $2 WHERE id = $1 AND version <> $2", agentID, version)
+	return err
 }
 
 // ListAgents lists a tenant's agents.

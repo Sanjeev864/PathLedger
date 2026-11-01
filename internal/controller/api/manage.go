@@ -150,6 +150,20 @@ func (s *Server) revokeAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// requestAgentRotation makes the agent replace its credential at its next
+// plan fetch.
+func (s *Server) requestAgentRotation(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "agent")
+	if !ok {
+		return
+	}
+	if err := s.store.RequestAgentRotation(r.Context(), tenantID(r), id); err != nil {
+		s.storeError(w, r, err, "agent")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 type testRequest struct {
 	SiteID          *string         `json:"site_id"`
 	Kind            wire.ProbeKind  `json:"kind"`

@@ -14,6 +14,7 @@ import (
 	"github.com/sanjeev864/pathledger/internal/agent"
 	"github.com/sanjeev864/pathledger/internal/buildinfo"
 	"github.com/sanjeev864/pathledger/internal/logging"
+	"github.com/sanjeev864/pathledger/internal/update"
 )
 
 func main() {
@@ -34,6 +35,7 @@ func run(args []string) int {
 	stateDir := fs.String("state-dir", env("PATHLEDGER_STATE_DIR", "/var/lib/pathledger-agent"), "directory for identity and spooled results (env PATHLEDGER_STATE_DIR)")
 	logLevel := fs.String("log-level", env("PATHLEDGER_LOG_LEVEL", "info"), "debug, info, warn or error (env PATHLEDGER_LOG_LEVEL)")
 	logFormat := fs.String("log-format", env("PATHLEDGER_LOG_FORMAT", "json"), "json or text (env PATHLEDGER_LOG_FORMAT)")
+	updateKey := fs.String("update-key", env("PATHLEDGER_UPDATE_PUBLIC_KEY", ""), "base64 ed25519 public key(s), comma-separated, trusted to sign agent releases; empty disables automatic updates (env PATHLEDGER_UPDATE_PUBLIC_KEY)")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -48,6 +50,20 @@ func run(args []string) int {
 		return 2
 	}
 
+	keys, err := update.ParsePublicKeys(*updateKey)
+	if err != nil {
+		log.Error("invalid update key", "error", err)
+		return 2
+	}
+	// Run a newer, verified release installed by a previous self-update.
+	if os.Getenv(agent.LaunchedEnv) == "" {
+		if path := agent.Launch(*stateDir, buildinfo.Version, keys, log); path != "" {
+			log.Info("starting installed agent update", "path", path)
+			err := agent.Exec(path)
+			log.Error("could not start installed update; continuing with this version", "error", err)
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -58,13 +74,26 @@ func run(args []string) int {
 		EnrollToken:   os.Getenv("PATHLEDGER_ENROLL_TOKEN"),
 		StateDir:      *stateDir,
 		Version:       buildinfo.Version,
+		UpdateKeys:    keys,
 	}
 	a, err := agent.New(ctx, cfg, log)
 	if err != nil {
 		log.Error("agent could not start", "error", err)
 		return 1
 	}
-	if err := a.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	err = a.Run(ctx)
+	if errors.Is(err, agent.ErrUpdateInstalled) {
+		stop()
+		if path := agent.Launch(*stateDir, buildinfo.Version, keys, log); path != "" {
+			log.Info("restarting into agent update", "path", path)
+			err = agent.Exec(path)
+		}
+		// Exec failed or the update was rejected at launch: exit non-zero so
+		// the service manager restarts the agent (and its launcher logic).
+		log.Error("could not start the installed update", "error", err)
+		return 1
+	}
+	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Error("agent stopped with error", "error", err)
 		return 1
 	}
