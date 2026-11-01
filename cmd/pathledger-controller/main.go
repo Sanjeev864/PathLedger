@@ -29,9 +29,11 @@ import (
 	"github.com/sanjeev864/pathledger/internal/controller/analytics"
 	"github.com/sanjeev864/pathledger/internal/controller/api"
 	"github.com/sanjeev864/pathledger/internal/controller/auth"
+	"github.com/sanjeev864/pathledger/internal/controller/maintenance"
 	"github.com/sanjeev864/pathledger/internal/controller/store"
 	"github.com/sanjeev864/pathledger/internal/enrich"
 	"github.com/sanjeev864/pathledger/internal/logging"
+	"github.com/sanjeev864/pathledger/internal/metrics"
 )
 
 const usage = `Usage: pathledger-controller <command> [flags]
@@ -53,6 +55,8 @@ Configuration (environment):
   PATHLEDGER_ASN_DB        path to IPtoASN ip2asn-v4.tsv(.gz) (optional; see scripts/fetch-asn-db.sh)
   PATHLEDGER_TRUST_PROXY   "true" when behind a reverse proxy, so rate limits use X-Forwarded-For
   PATHLEDGER_ANALYTICS_WINDOW, _INTERVAL   evaluation window (5m) and frequency (1m)
+  PATHLEDGER_RETENTION_DAYS   days of raw results to keep (default 90)
+  PATHLEDGER_METRICS_ADDR     address for Prometheus /metrics, e.g. 127.0.0.1:9090 (off by default)
   PATHLEDGER_PUBLIC_URL    dashboard URL used for links in notifications (optional)
   PATHLEDGER_SMTP_HOST, _PORT (587), _USERNAME, _PASSWORD, _FROM   email notifications (optional)
   PATHLEDGER_TELEGRAM_BOT_TOKEN                                    Telegram notifications (optional)
@@ -156,8 +160,25 @@ func serve(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	senders["webhook"] = &alert.Webhook{Client: alert.SafeHTTPClient(allowPrivate)}
 	notifier := &alert.Notifier{Store: st, Log: log, PublicURL: os.Getenv("PATHLEDGER_PUBLIC_URL")}
 
+	reg := metrics.NewRegistry()
+	reg.GaugeSet(map[string]string{
+		"pathledger_agents":                     "Active (unrevoked) agents.",
+		"pathledger_agents_stale":               "Active agents silent for more than 5 minutes.",
+		"pathledger_events_open":                "Open events across all tenants.",
+		"pathledger_deliveries_pending":         "Notifications waiting to be sent.",
+		"pathledger_deliveries_failed_last_day": "Notifications that failed permanently in the last 24 hours.",
+		"pathledger_results_rows_estimate":      "Approximate rows in the results table.",
+	}, st.Gauges)
+
+	retention, err := retentionFromEnv()
+	if err != nil {
+		return err
+	}
+	go maintenance.Run(ctx, st, retention, time.Hour, log)
+
 	// Background workers stop when ctx is cancelled (on shutdown).
 	engine := analytics.NewEngine(st, notifier, log)
+	engine.RegisterMetrics(reg)
 	every := time.Minute
 	if v := os.Getenv("PATHLEDGER_ANALYTICS_WINDOW"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -174,9 +195,22 @@ func serve(ctx context.Context, st *store.Store, log *slog.Logger) error {
 		every = d
 	}
 	go engine.Run(ctx, every)
-	go (&alert.Dispatcher{Store: st, Sender: senders, Log: log}).Run(ctx, 10*time.Second)
+	go (&alert.Dispatcher{Store: st, Sender: senders, Log: log,
+		Outcomes: reg.CounterVec("pathledger_notifications_total", "Notification delivery attempts by channel kind and outcome.", false, "kind", "outcome"),
+	}).Run(ctx, 10*time.Second)
 
-	var opts []api.Option
+	if maddr := os.Getenv("PATHLEDGER_METRICS_ADDR"); maddr != "" {
+		msrv := &http.Server{Addr: maddr, Handler: reg.Handler(), ReadHeaderTimeout: 5 * time.Second}
+		go func() {
+			if err := msrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("metrics listener failed", "error", err)
+			}
+		}()
+		defer msrv.Close()
+		log.Info("metrics listening", "addr", maddr)
+	}
+
+	opts := []api.Option{api.WithMetrics(reg)}
 	if u := os.Getenv("PATHLEDGER_PUBLIC_URL"); u != "" {
 		opts = append(opts, api.WithPublicURL(u))
 	}
@@ -259,6 +293,24 @@ func apikeyCreate(ctx context.Context, args []string, stdout io.Writer, log *slo
 		fmt.Fprintf(stdout, "API key created\n  id:      %s\n  api key: %s\n\nStore the API key now; it cannot be shown again.\n", k.ID, key)
 		return nil
 	})
+}
+
+// retentionFromEnv reads PATHLEDGER_RETENTION_DAYS (raw results, default
+// 90); resolved events are kept a year and deliveries 30 days.
+func retentionFromEnv() (store.Retention, error) {
+	days := 90
+	if v := os.Getenv("PATHLEDGER_RETENTION_DAYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 7 || n > 3650 {
+			return store.Retention{}, errors.New("PATHLEDGER_RETENTION_DAYS must be between 7 and 3650")
+		}
+		days = n
+	}
+	return store.Retention{
+		Results:    time.Duration(days) * 24 * time.Hour,
+		Events:     365 * 24 * time.Hour,
+		Deliveries: 30 * 24 * time.Hour,
+	}, nil
 }
 
 // alertSenders configures email and Telegram from the environment. Either

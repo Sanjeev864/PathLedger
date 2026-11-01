@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/sanjeev864/pathledger/internal/controller/store"
+	"github.com/sanjeev864/pathledger/internal/metrics"
 	"github.com/sanjeev864/pathledger/pkg/wire"
 )
 
@@ -71,6 +73,17 @@ type Engine struct {
 	log      *slog.Logger
 	now      func() time.Time
 	window   time.Duration
+
+	runs, failures *metrics.Counter
+	lastSuccess    atomic.Int64
+}
+
+// RegisterMetrics exposes evaluation counters and the last success time.
+func (e *Engine) RegisterMetrics(reg *metrics.Registry) {
+	e.runs = reg.Counter("pathledger_analytics_runs_total", "Analytics evaluations run by this replica.")
+	e.failures = reg.Counter("pathledger_analytics_failures_total", "Analytics evaluations that failed.")
+	reg.GaugeFunc("pathledger_analytics_last_success_timestamp_seconds", "Unix time of the last successful evaluation on this replica.",
+		func() float64 { return float64(e.lastSuccess.Load()) })
 }
 
 // NewEngine returns an engine; notifier may be nil.
@@ -100,7 +113,20 @@ func (e *Engine) Run(ctx context.Context, interval time.Duration) {
 
 // Evaluate runs one evaluation cycle if this replica holds the lock.
 func (e *Engine) Evaluate(ctx context.Context) error {
-	return e.store.WithAnalyticsLock(ctx, e.evaluate)
+	err := e.store.WithAnalyticsLock(ctx, e.evaluate)
+	if errors.Is(err, store.ErrLocked) {
+		return err
+	}
+	if e.runs != nil {
+		e.runs.Inc()
+		if err != nil {
+			e.failures.Inc()
+		}
+	}
+	if err == nil {
+		e.lastSuccess.Store(e.now().Unix())
+	}
+	return err
 }
 
 func (e *Engine) evaluate(ctx context.Context) error {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/sanjeev864/pathledger/internal/controller/store"
 	"github.com/sanjeev864/pathledger/internal/controller/webui"
+	"github.com/sanjeev864/pathledger/internal/metrics"
 	"github.com/sanjeev864/pathledger/pkg/wire"
 )
 
@@ -83,6 +84,19 @@ type Server struct {
 
 	mailer    Mailer
 	publicURL string
+
+	httpMetrics     *metrics.Vec
+	ingestedResults *metrics.Counter
+	rejectedResults *metrics.Counter
+}
+
+// WithMetrics records request and ingest metrics in reg.
+func WithMetrics(reg *metrics.Registry) Option {
+	return func(s *Server) {
+		s.httpMetrics = reg.CounterVec("pathledger_http_request_duration_seconds", "HTTP requests by route and status class.", true, "route", "code")
+		s.ingestedResults = reg.Counter("pathledger_results_ingested_total", "Probe results stored.")
+		s.rejectedResults = reg.Counter("pathledger_results_rejected_total", "Probe results rejected at ingest.")
+	}
 }
 
 // TrustProxyHeaders makes rate limits key on X-Forwarded-For; enable only

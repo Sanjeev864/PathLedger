@@ -245,3 +245,30 @@ func TestTracerouteIngestAnnotatesHops(t *testing.T) {
 		t.Fatalf("hops not annotated: %+v", h)
 	}
 }
+
+func TestPurge(t *testing.T) {
+	f := setup(t)
+	tt, _ := f.s.CreateTest(ctx, f.tenant.ID, nil, wire.Test{Kind: wire.KindICMP, Target: "1.1.1.1", IntervalSeconds: 30, TimeoutMillis: 1000})
+	agent := enroll(t, f, f.site.ID)
+	id, _ := f.s.AuthenticateAgent(ctx, agent.AgentToken)
+	now := time.Now().UTC()
+	var rs []wire.Result
+	for _, age := range []time.Duration{time.Hour, 10 * 24 * time.Hour, 20 * 24 * time.Hour} {
+		rs = append(rs, wire.Result{TestID: tt.ID, Time: now.Add(-age), Kind: wire.KindICMP, Target: "1.1.1.1", Success: true})
+	}
+	if acc, _, _ := f.s.InsertResults(ctx, id, rs); acc != 3 {
+		t.Fatalf("inserted %d", acc)
+	}
+	rep, err := f.s.Purge(ctx, store.Retention{Results: 7 * 24 * time.Hour, Events: 365 * 24 * time.Hour, Deliveries: 30 * 24 * time.Hour})
+	if err != nil || rep.Results != 2 {
+		t.Fatalf("purge: %+v %v", rep, err)
+	}
+	left, _ := f.s.QueryResults(ctx, f.tenant.ID, store.ResultFilter{From: now.Add(-30 * 24 * time.Hour), To: now, Limit: 10})
+	if len(left) != 1 {
+		t.Fatalf("expected 1 result kept, got %d", len(left))
+	}
+	g, err := f.s.Gauges(ctx)
+	if err != nil || g["pathledger_agents"] != 1 {
+		t.Fatalf("gauges: %v %v", g, err)
+	}
+}

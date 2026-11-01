@@ -109,6 +109,10 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		s.storeError(w, r, err, "results")
 		return
 	}
+	if s.ingestedResults != nil {
+		s.ingestedResults.Add(uint64(accepted))
+		s.rejectedResults.Add(uint64(rejected))
+	}
 	if rejected > 0 {
 		s.log.WarnContext(r.Context(), "rejected results from agent", "agent_id", agentIdentity(r).AgentID, "rejected", rejected)
 	}

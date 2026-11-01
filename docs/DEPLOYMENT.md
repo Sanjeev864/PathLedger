@@ -34,6 +34,15 @@ Suitable for a campus pilot and the first handful of customer sites.
      and register the group's chat ID as a channel.
    - `PATHLEDGER_PUBLIC_URL=https://pathledger.example.com` so notifications
      link to the dashboard, and `PATHLEDGER_TRUST_PROXY=true` behind Caddy.
+   - `PATHLEDGER_RETENTION_DAYS` (default 90, range 7–3650): raw probe results
+     older than this are deleted hourly. Resolved events are kept 365 days,
+     notification deliveries 30 days; expired sessions, invitations and
+     enrollment tokens are removed too. With TimescaleDB, old result chunks
+     are dropped instead of deleted row by row. Only one replica purges at a
+     time (PostgreSQL advisory lock).
+   - `PATHLEDGER_METRICS_ADDR=127.0.0.1:9090` exposes Prometheus metrics at
+     `/metrics` on a separate listener (off by default; never publish it).
+     See "Monitoring the controller" below.
 5. **Backups.** Schedule `pg_dump` daily and copy the dumps off the VM.
 
 ## Agents
@@ -57,12 +66,33 @@ docker run -d --name pathledger-agent --restart unless-stopped \
 Docker allows unprivileged ICMP sockets inside containers by default, so no
 extra capabilities are required.
 
+## Monitoring the controller
+
+Metrics exposed on `PATHLEDGER_METRICS_ADDR`:
+
+| Metric | Meaning |
+|---|---|
+| `pathledger_http_request_duration_seconds_{count,sum}{route,code}` | Requests by route pattern and status class |
+| `pathledger_results_ingested_total`, `..._rejected_total` | Probe results stored / rejected |
+| `pathledger_analytics_runs_total`, `..._failures_total` | Evaluations on this replica |
+| `pathledger_analytics_last_success_timestamp_seconds` | Last good evaluation (alert if > 5 min old on every replica) |
+| `pathledger_notifications_total{kind,outcome}` | delivered / retry / failed |
+| `pathledger_agents`, `pathledger_agents_stale` | Fleet size and agents silent > 5 min |
+| `pathledger_events_open`, `pathledger_deliveries_pending`, `pathledger_deliveries_failed_last_day` | Backlog health |
+| `pathledger_results_rows_estimate` | Table growth (planner estimate) |
+| `go_goroutines`, `go_memstats_*`, `process_start_time_seconds` | Runtime |
+
+Suggested alerts: analytics last success older than 5 minutes; any
+`deliveries_failed_last_day`; `deliveries_pending` growing for 15 minutes;
+5xx rate above 1%.
+
 ## Production checklist (Milestone 3)
 
 - [ ] Two controller replicas behind a load balancer using `/readyz`
 - [ ] Managed or replicated PostgreSQL with point-in-time recovery
 - [ ] TimescaleDB with compression and a retention policy
-- [ ] Rate limiting per credential
-- [ ] Prometheus metrics and alerting on the controller itself
+- [x] Rate limiting per credential
+- [x] Prometheus metrics (alerting rules are the operator's)
+- [x] Data retention job
 - [ ] Mutual TLS for agents and signed agent updates
 - [ ] Documented incident and data-retention policies (DPDP Act)

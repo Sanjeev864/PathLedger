@@ -6,6 +6,8 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+
+	"github.com/sanjeev864/pathledger/internal/metrics"
 )
 
 // Dispatcher sends queued deliveries with retries.
@@ -14,6 +16,8 @@ type Dispatcher struct {
 	Sender Sender
 	Log    *slog.Logger
 	now    func() time.Time
+	// Outcomes, when set, counts attempts by channel kind and result.
+	Outcomes *metrics.Vec
 }
 
 // retrySchedule is the wait before each retry; after the last one the
@@ -66,6 +70,16 @@ func (d *Dispatcher) Drain(ctx context.Context) (int, error) {
 			var retryAt time.Time
 			if sendErr != nil && !errors.Is(sendErr, ErrPermanent) && del.Attempts <= len(retrySchedule) {
 				retryAt = now().UTC().Add(retrySchedule[del.Attempts-1])
+			}
+			if d.Outcomes != nil {
+				outcome := "delivered"
+				switch {
+				case sendErr != nil && retryAt.IsZero():
+					outcome = "failed"
+				case sendErr != nil:
+					outcome = "retry"
+				}
+				d.Outcomes.Inc(del.Channel.Kind, outcome)
 			}
 			if sendErr != nil {
 				d.Log.Warn("notification delivery failed", "delivery_id", del.ID, "channel", del.Channel.Name,

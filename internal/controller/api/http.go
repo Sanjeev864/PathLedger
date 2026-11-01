@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -156,6 +157,13 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 		}
 		if rec.status >= 500 {
 			level = slog.LevelError
+		}
+		if s.httpMetrics != nil {
+			route := r.Pattern // set by the router; bounded, unlike raw paths
+			if route == "" {
+				route = "unmatched"
+			}
+			s.httpMetrics.Observe(time.Since(start).Seconds(), route, strconv.Itoa(rec.status/100)+"xx")
 		}
 		s.log.Log(r.Context(), level, "http request",
 			"method", r.Method, "path", r.URL.Path, "status", rec.status,
