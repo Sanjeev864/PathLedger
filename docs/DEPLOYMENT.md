@@ -22,7 +22,19 @@ Suitable for a campus pilot and the first handful of customer sites.
    ```
    Alternatively, Cloudflare Tunnel exposes the controller without opening
    any inbound port.
-4. **Backups.** Schedule `pg_dump` daily and copy the dumps off the VM.
+4. **Optional settings** (in `.env` / the controller environment):
+   - `PATHLEDGER_ASN_DB=/data/ip2asn-v4.tsv.gz` after
+     `scripts/fetch-asn-db.sh deploy/data/ip2asn-v4.tsv.gz` (refresh weekly).
+   - Email: `PATHLEDGER_SMTP_HOST`, `PATHLEDGER_SMTP_PORT` (587),
+     `PATHLEDGER_SMTP_USERNAME`, `PATHLEDGER_SMTP_PASSWORD`,
+     `PATHLEDGER_SMTP_FROM`. Any provider works, including a free-tier
+     transactional email service.
+   - Telegram: create a bot with @BotFather and set
+     `PATHLEDGER_TELEGRAM_BOT_TOKEN`; customers add the bot to their group
+     and register the group's chat ID as a channel.
+   - `PATHLEDGER_PUBLIC_URL=https://pathledger.example.com` so notifications
+     link to the dashboard, and `PATHLEDGER_TRUST_PROXY=true` behind Caddy.
+5. **Backups.** Schedule `pg_dump` daily and copy the dumps off the VM.
 
 ## Agents
 

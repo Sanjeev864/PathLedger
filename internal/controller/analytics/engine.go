@@ -70,12 +70,17 @@ type Engine struct {
 	notifier Notifier
 	log      *slog.Logger
 	now      func() time.Time
+	window   time.Duration
 }
 
 // NewEngine returns an engine; notifier may be nil.
 func NewEngine(st Store, n Notifier, log *slog.Logger) *Engine {
-	return &Engine{store: st, notifier: n, log: log, now: time.Now}
+	return &Engine{store: st, notifier: n, log: log, now: time.Now, window: Window}
 }
+
+// SetWindow changes the evaluation window (default 5 minutes). Shorter
+// windows detect faster but flap more; the fault lab uses ~40 s.
+func (e *Engine) SetWindow(d time.Duration) { e.window = d }
 
 // Run evaluates every interval until ctx is cancelled.
 func (e *Engine) Run(ctx context.Context, interval time.Duration) {
@@ -103,7 +108,7 @@ func (e *Engine) evaluate(ctx context.Context) error {
 	if err := e.maybeRefreshBaselines(ctx, now); err != nil {
 		return fmt.Errorf("refreshing baselines: %w", err)
 	}
-	rows, err := e.store.WindowHealth(ctx, now.Add(-Window), now)
+	rows, err := e.store.WindowHealth(ctx, now.Add(-e.window), now)
 	if err != nil {
 		return fmt.Errorf("window health: %w", err)
 	}
@@ -197,7 +202,7 @@ func (e *Engine) maybeRefreshBaselines(ctx context.Context, now time.Time) error
 		return nil
 	}
 	// Exclude the current window so an ongoing incident does not become "normal".
-	n, err := e.store.RefreshBaselines(ctx, now.Add(-BaselineSpan), now.Add(-Window))
+	n, err := e.store.RefreshBaselines(ctx, now.Add(-BaselineSpan), now.Add(-e.window))
 	if err == nil {
 		e.log.Info("baselines refreshed", "series", n)
 	}

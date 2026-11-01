@@ -47,6 +47,7 @@ Configuration (environment):
   PATHLEDGER_LOG_FORMAT    json or text (default json)
   PATHLEDGER_ASN_DB        path to IPtoASN ip2asn-v4.tsv(.gz) (optional; see scripts/fetch-asn-db.sh)
   PATHLEDGER_TRUST_PROXY   "true" when behind a reverse proxy, so rate limits use X-Forwarded-For
+  PATHLEDGER_ANALYTICS_WINDOW, _INTERVAL   evaluation window (5m) and frequency (1m)
   PATHLEDGER_PUBLIC_URL    dashboard URL used for links in notifications (optional)
   PATHLEDGER_SMTP_HOST, _PORT (587), _USERNAME, _PASSWORD, _FROM   email notifications (optional)
   PATHLEDGER_TELEGRAM_BOT_TOKEN                                    Telegram notifications (optional)
@@ -149,7 +150,23 @@ func serve(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	notifier := &alert.Notifier{Store: st, Log: log, PublicURL: os.Getenv("PATHLEDGER_PUBLIC_URL")}
 
 	// Background workers stop when ctx is cancelled (on shutdown).
-	go analytics.NewEngine(st, notifier, log).Run(ctx, time.Minute)
+	engine := analytics.NewEngine(st, notifier, log)
+	every := time.Minute
+	if v := os.Getenv("PATHLEDGER_ANALYTICS_WINDOW"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 10*time.Second {
+			return fmt.Errorf("PATHLEDGER_ANALYTICS_WINDOW must be a duration of at least 10s")
+		}
+		engine.SetWindow(d)
+	}
+	if v := os.Getenv("PATHLEDGER_ANALYTICS_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Second {
+			return fmt.Errorf("PATHLEDGER_ANALYTICS_INTERVAL must be a duration of at least 1s")
+		}
+		every = d
+	}
+	go engine.Run(ctx, every)
 	go (&alert.Dispatcher{Store: st, Sender: senders, Log: log}).Run(ctx, 10*time.Second)
 
 	var opts []api.Option

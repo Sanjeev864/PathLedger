@@ -27,6 +27,7 @@ Non-2xx responses share one shape:
 | --- | --- |
 | 400 | `invalid_json`, `invalid_query`, `invalid_encoding` |
 | 401 | `unauthorized`, `invalid_token` |
+| 429 | `rate_limited` (see `Retry-After`) |
 | 404 | `not_found` (also returned for resources owned by another tenant) |
 | 409 | `conflict` |
 | 413 | `body_too_large`, `batch_too_large` |
@@ -41,13 +42,24 @@ Request bodies are decoded strictly: unknown fields are rejected.
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `kind` | string | `icmp`, `dns`, `tcp`, `tls`, `http` |
-| `target` | string | icmp: host or IP · dns: domain name · tcp/tls: `host:port` · http: `http(s)://` URL without credentials |
+| `kind` | string | `icmp`, `dns`, `tcp`, `tls`, `http`, `traceroute` |
+| `target` | string | icmp/traceroute: host or IP · dns: domain name · tcp/tls: `host:port` · http: `http(s)://` URL without credentials |
 | `interval_seconds` | int | 10–3600 |
 | `timeout_millis` | int | 100–30000, and shorter than the interval |
-| `params.count` | int | icmp only, 1–20 echo requests per run (default 5) |
+| `params.count` | int | icmp: 1–20 echo requests per run (default 5) · traceroute: 1–5 probes per hop (default 3) |
+| `params.max_hops` | int | traceroute only, 1–32 (default 30) |
 | `params.resolver` | string | dns only, `ip:port` of the server to query (default: system resolver) |
 | `params.expect_status` | int | http only; exact status treated as success (default: any 2xx/3xx) |
+
+Traceroute tests run at most once every 60 seconds, and for them
+`timeout_millis` is the wait per probe: `max_hops × count × timeout_millis`
+must be shorter than the interval.
+
+## Rate limits
+
+Token buckets per credential: agents 1 request/s (burst 20), API keys
+10 requests/s (burst 50), enrolment 1 request per 5 s per client IP
+(burst 10). Exceeding a limit returns `429` with `Retry-After` in seconds.
 
 ## Agent API
 
@@ -92,6 +104,11 @@ Uploads up to 500 results. Send `Content-Encoding: gzip` to save bandwidth
 }]}
 ```
 
+Traceroute results also carry `hops`: `[{"ttl", "addr", "sent", "received",
+"avg_ms", "min_ms", "max_ms", "unreachable"}]`. The controller adds `scope`
+(`lan`, `cgnat`, `public`, …), `asn` and `as_name` to each hop when it stores
+the result.
+
 Failed measurements set `"success": false`, an `error_class` (`timeout`, `dns`,
 `refused`, `unreachable`, `tls`, `http_status`, `loss`, `config`, `other`) and
 an `error` message.
@@ -124,6 +141,7 @@ timestamp is more than 5 minutes in the future or 30 days in the past.
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/tests` | | `{"items": [Test]}` |
 | `POST` | `/api/v1/tests` | Test definition plus optional `"site_id"` (omit or `null` for every site) | `201` Test |
+| `PATCH` | `/api/v1/tests/{id}` | any of `target`, `interval_seconds`, `timeout_millis`, `params`, `enabled` | Test |
 | `DELETE` | `/api/v1/tests/{id}` | | `204`; historical results are kept |
 
 ### Results
@@ -138,6 +156,47 @@ timestamp is more than 5 minutes in the future or 30 days in the past.
             "target": "https://billing.example.com/health", "success": true, "latency_ms": 84.2,
             "details": {"status": "200", "dns_ms": "3.100", "connect_ms": "12.400", "tls_ms": "31.000", "ttfb_ms": "70.200"}}]}
 ```
+
+### Series (for charts)
+
+`GET /api/v1/series?site_id=&test_id=&window=24h` — results aggregated into
+buckets (1 min up to 3 h, 5 min up to 24 h, 30 min up to 7 days, 2 h beyond):
+`{"step_seconds": 300, "from", "to", "items": [{"t", "n", "fail", "latency_ms", "latency_p95_ms", "loss_pct"}]}`.
+
+### Events
+
+PathLedger evaluates every site each minute and keeps at most one open
+event per site. `verdict` is one of `local`, `isp`, `upstream`, `dns`, `app`,
+`offline` or `unknown`.
+
+| Method | Path | Query | Response |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/events` | `state` (`open`/`resolved`), `site_id`, `limit` (≤1000) | `{"items": [Event]}` newest first |
+| `GET` | `/api/v1/events/{id}` | | `{"id", "site_id", "state", "verdict", "summary", "evidence": [], "affected_tests": [], "started_at", "updated_at", "resolved_at"}` |
+
+### Notification channels
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/channels` | | `{"items": [Channel]}` (webhook secrets masked) |
+| `POST` | `/api/v1/channels` | `{"kind": "email", "name", "to": ["a@b.c"]}` · `{"kind": "telegram", "name", "chat_id"}` · `{"kind": "webhook", "name", "url": "https://…"}` | `201` Channel; for webhooks `config.secret` is shown this once |
+| `POST` | `/api/v1/channels/{id}/test` | | `202 {"queued": 1}` |
+| `DELETE` | `/api/v1/channels/{id}` | | `204` |
+| `GET` | `/api/v1/deliveries` | | last 100 deliveries with attempts, errors and outcome |
+
+Webhooks receive `{"type": "event.opened" | "event.verdict_changed" | "event.resolved" | "test", "site_name", "event", "link", "created_at"}`
+with header `X-PathLedger-Signature: sha256=<hex HMAC-SHA256 of the body using the channel secret>`.
+Failed deliveries are retried after 1, 5, 15, 60 and 180 minutes; 4xx
+responses fail immediately. Webhook URLs that resolve to private or
+reserved addresses are refused.
+
+### API keys
+
+| Method | Path | Body | Response |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/api-keys` | | `{"items": [{"id", "name", "prefix", "created_at", "last_used_at", "revoked_at"}]}` |
+| `POST` | `/api/v1/api-keys` | `{"name": "dashboard"}` | `201 {"key": {...}, "token": "plk_…"}` (shown once) |
+| `DELETE` | `/api/v1/api-keys/{id}` | | `204`; `409` if it is the key making the request |
 
 ## Operations
 

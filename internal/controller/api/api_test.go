@@ -388,3 +388,42 @@ func TestRateLimits(t *testing.T) {
 		t.Fatalf("enrol flood not limited: %d", code)
 	}
 }
+
+func TestSeries(t *testing.T) {
+	h, _ := newHarness(t)
+	var site, tok, test idResp
+	h.call("POST", "/api/v1/sites", h.apiKey, map[string]string{"name": "S"}, &site)
+	h.call("POST", "/api/v1/sites/"+site.ID+"/enrollment-tokens", h.apiKey, nil, &tok)
+	h.call("POST", "/api/v1/tests", h.apiKey, map[string]any{"kind": "tcp", "target": "x.example:443", "interval_seconds": 10, "timeout_millis": 1000}, &test)
+	var enrolled wire.EnrollResponse
+	h.call("POST", "/api/v1/agent/enroll", "", wire.EnrollRequest{Token: tok.Token}, &enrolled)
+	now := time.Now().UTC().Add(-2 * time.Minute)
+	var rs []wire.Result
+	for i, ms := range []float64{10, 20, 30} {
+		rs = append(rs, wire.Result{TestID: test.ID, Time: now.Add(time.Duration(i) * time.Second), Kind: wire.KindTCP, Target: "x.example:443", Success: true, LatencyMS: wire.Float(ms)})
+	}
+	rs = append(rs, wire.Result{TestID: test.ID, Time: now, Kind: wire.KindTCP, Target: "x.example:443", Success: false, ErrorClass: wire.ErrClassTimeout})
+	h.call("POST", "/api/v1/agent/results", enrolled.AgentToken, wire.ResultBatch{Results: rs}, nil)
+
+	var series struct {
+		Step  int `json:"step_seconds"`
+		Items []struct {
+			N, Fail   int
+			LatencyMS *float64 `json:"latency_ms"`
+		} `json:"items"`
+	}
+	code := h.call("GET", "/api/v1/series?site_id="+site.ID+"&test_id="+test.ID+"&window=3h", h.apiKey, nil, &series)
+	if code != 200 || series.Step != 60 {
+		t.Fatalf("series: %d %+v", code, series)
+	}
+	total, fails := 0, 0
+	for _, p := range series.Items {
+		total, fails = total+p.N, fails+p.Fail
+	}
+	if total != 4 || fails != 1 {
+		t.Fatalf("expected 4 samples with 1 failure, got %+v", series.Items)
+	}
+	if code := h.call("GET", "/api/v1/series?site_id="+site.ID+"&test_id="+test.ID+"&window=5m", h.apiKey, nil, nil); code != 400 {
+		t.Fatalf("short window accepted: %d", code)
+	}
+}

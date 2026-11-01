@@ -251,3 +251,52 @@ func (s *Server) queryResults(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, newList(results))
 }
+
+// seriesSteps maps window length to bucket size so a chart never has more
+// than a few hundred points.
+func seriesStep(window time.Duration) time.Duration {
+	switch {
+	case window <= 3*time.Hour:
+		return time.Minute
+	case window <= 24*time.Hour:
+		return 5 * time.Minute
+	case window <= 7*24*time.Hour:
+		return 30 * time.Minute
+	default:
+		return 2 * time.Hour
+	}
+}
+
+func (s *Server) series(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	siteID, testID := q.Get("site_id"), q.Get("test_id")
+	if !validID(siteID) || !validID(testID) {
+		writeError(w, http.StatusBadRequest, "invalid_query", "site_id and test_id are required IDs")
+		return
+	}
+	to := s.now().UTC()
+	window := 24 * time.Hour
+	if v := q.Get("window"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Hour || d > maxResultsWindow {
+			writeError(w, http.StatusBadRequest, "invalid_query", "window: a duration between 1h and 744h")
+			return
+		}
+		window = d
+	}
+	step := seriesStep(window)
+	from := to.Add(-window).Truncate(step)
+	points, err := s.store.Series(r.Context(), tenantID(r), siteID, testID, from, to, step)
+	if err != nil {
+		s.storeError(w, r, err, "series")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"step_seconds": int(step.Seconds()), "from": from, "to": to, "items": nonNilPoints(points)})
+}
+
+func nonNilPoints(p []store.SeriesPoint) []store.SeriesPoint {
+	if p == nil {
+		return []store.SeriesPoint{}
+	}
+	return p
+}

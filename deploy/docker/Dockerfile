@@ -1,4 +1,11 @@
 # Builds either binary: docker build --build-arg BINARY=pathledger-controller ...
+FROM node:22-alpine AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM golang:1.24-alpine AS build
 ARG BINARY=pathledger-controller
 ARG VERSION=dev
@@ -6,6 +13,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=web /src/internal/controller/webui/dist ./internal/controller/webui/dist
 RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags "-s -w -X github.com/sanjeev864/pathledger/internal/buildinfo.Version=${VERSION}" \
       -o /out/app ./cmd/${BINARY}

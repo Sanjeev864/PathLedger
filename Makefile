@@ -3,7 +3,11 @@ LDFLAGS := -s -w -X github.com/sanjeev864/pathledger/internal/buildinfo.Version=
 # Agent targets: x86 servers, Raspberry Pi (arm64/armv7) and MIPS OpenWrt routers.
 AGENT_PLATFORMS := linux/amd64 linux/arm64 linux/arm/7 linux/mipsle/softfloat linux/mips/softfloat
 
-.PHONY: build test test-db lint e2e dist clean
+.PHONY: build web test test-db lint e2e lab dist clean
+
+# Builds the dashboard into internal/controller/webui/dist (embedded by go build).
+web:
+	cd web && npm ci && npm run check && npm run build
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/ ./cmd/...
@@ -24,6 +28,11 @@ lint:
 e2e: build
 	./scripts/e2e.sh
 
+# Fault-injection lab (Linux, root). Needs: pip install pyroute2, an empty
+# database in PATHLEDGER_DATABASE_URL. Writes lab/results.md.
+lab: build
+	python3 -u lab/faultlab.py --bin ./bin --out lab/results.md
+
 dist:
 	@mkdir -p dist
 	@for p in $(AGENT_PLATFORMS); do \
@@ -35,4 +44,5 @@ dist:
 	done
 
 clean:
-	rm -rf bin dist
+	rm -rf bin dist web/node_modules
+	find internal/controller/webui/dist -mindepth 1 ! -name .gitignore ! -name .keep -delete

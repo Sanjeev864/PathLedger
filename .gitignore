@@ -21,3 +21,6 @@ agent-state/
 .vscode/
 *.swp
 .DS_Store
+
+# Dashboard
+web/node_modules/

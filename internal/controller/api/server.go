@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sanjeev864/pathledger/internal/controller/store"
+	"github.com/sanjeev864/pathledger/internal/controller/webui"
 	"github.com/sanjeev864/pathledger/pkg/wire"
 )
 
@@ -46,6 +47,7 @@ type Store interface {
 	CreateAPIKey(ctx context.Context, tenantID, name string) (store.APIKey, string, error)
 	ListAPIKeys(ctx context.Context, tenantID string) ([]store.APIKey, error)
 	RevokeAPIKey(ctx context.Context, tenantID, keyID string) error
+	Series(ctx context.Context, tenantID, siteID, testID string, from, to time.Time, step time.Duration) ([]store.SeriesPoint, error)
 }
 
 // Server serves the PathLedger API.
@@ -118,6 +120,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/api-keys", s.tenantAuth(s.createAPIKey))
 	mux.Handle("DELETE /api/v1/api-keys/{id}", s.tenantAuth(s.revokeAPIKey))
 	mux.Handle("GET /api/v1/results", s.tenantAuth(s.queryResults))
+	mux.Handle("GET /api/v1/series", s.tenantAuth(s.series))
 	mux.Handle("GET /api/v1/events", s.tenantAuth(s.listEvents))
 	mux.Handle("GET /api/v1/events/{id}", s.tenantAuth(s.getEvent))
 	mux.Handle("GET /api/v1/channels", s.tenantAuth(s.listChannels))
@@ -126,9 +129,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/channels/{id}/test", s.tenantAuth(s.testChannel))
 	mux.Handle("GET /api/v1/deliveries", s.tenantAuth(s.listDeliveries))
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")
 	})
+	// Everything else is the dashboard.
+	mux.Handle("/", webui.Handler())
 
 	return s.requestContext(s.recoverPanics(s.accessLog(securityHeaders(mux))))
 }

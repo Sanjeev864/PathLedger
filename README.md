@@ -5,15 +5,19 @@
 PathLedger puts a small agent at every branch (a Raspberry Pi, a spare PC, a
 Docker host or, soon, an OpenWrt router). The agent continuously measures the
 links the business depends on — ICMP loss and jitter, DNS resolution, TCP and
-TLS handshakes, and HTTP checks against the apps people actually use — and
-ships the results to a central controller. The goal is to answer three
-questions automatically: *is it us, the ISP, or the app?*, *where on the path
-is the fault?*, and *did the ISP meet its SLA this month?*
+TLS handshakes, HTTP checks against the apps people actually use, and
+Paris-style traceroutes — and ships the results to a central controller.
 
-> **Status:** Milestone 1 (Foundation) is complete — agent, controller, API,
-> storage, tests and packaging. Fault attribution, alerts and the web dashboard
-> are Milestone 2. See [docs/ROADMAP.md](docs/ROADMAP.md) for what is done,
-> what is next and known issues.
+The controller answers three questions automatically: *is it us, the ISP,
+or the app?*, *where on the path is the fault?*, and *did the ISP meet its
+SLA this month?* Every problem becomes an event with a verdict (`local`,
+`isp`, `upstream`, `dns`, `app` or `offline`) and the evidence behind it,
+delivered by email, Telegram or signed webhook, and shown in a web dashboard.
+
+> **Status:** Milestones 1 (Foundation) and 2 (Insight) are complete. The
+> fault-injection lab in CI checks the verdicts against real injected faults —
+> see [lab/results.md](lab/results.md). Next is Milestone 3 (production
+> release). Details, open items and known issues: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## How it works
 
@@ -65,8 +69,17 @@ PATHLEDGER_ENROLL_TOKEN=$TOKEN ./bin/pathledger-agent \
   -controller http://localhost:8080 -state-dir ./var/agent -log-format text
 ```
 
-Results appear at `GET /api/v1/results`. Plain `http://` is accepted only for
-localhost; any other controller URL must be `https://`.
+Results appear at `GET /api/v1/results`, and the dashboard is served at
+`http://localhost:8080/` (sign in with the API key). Plain `http://` is
+accepted only for localhost; any other controller URL must be `https://`.
+
+The dashboard is embedded at build time: run `make web` (Node 22+) before
+`make build`, or the controller serves a "dashboard not built" page.
+
+Optional controller settings: `PATHLEDGER_ASN_DB` (free IPtoASN data, see
+`scripts/fetch-asn-db.sh`) to name the networks on each path;
+`PATHLEDGER_SMTP_*` and `PATHLEDGER_TELEGRAM_BOT_TOKEN` for notifications.
+Run `pathledger-controller` with no arguments for the full list.
 
 ### With Docker Compose
 
@@ -84,6 +97,7 @@ make test                       # unit tests (database tests skip)
 PATHLEDGER_TEST_DATABASE_URL='postgres://postgres@localhost:5432/postgres?sslmode=disable' make test-db
 PATHLEDGER_DATABASE_URL='postgres://.../pathledger_e2e?sslmode=disable' make e2e
 make dist                       # cross-compiles the agent for amd64, arm64, armv7, mips, mipsle
+sudo -E make lab                # fault-injection lab (Linux, root, pip install pyroute2)
 ```
 
 Database tests create and drop their own uniquely named databases, so the URL
@@ -104,6 +118,12 @@ ICMP probes use unprivileged ping sockets where the OS allows them
 | `internal/controller/api` | HTTP handlers and middleware |
 | `internal/controller/store` | PostgreSQL access and migrations |
 | `internal/controller/auth` | Credential generation and hashing |
+| `internal/controller/analytics` | Baselines, site status, fault verdicts, events |
+| `internal/controller/alert` | Email, Telegram and webhook delivery via an outbox |
+| `internal/controller/webui` | Embedded dashboard |
+| `internal/enrich` | Address scope and IP → AS lookup |
+| `web/` | Dashboard source (Svelte 5, TypeScript, ECharts) |
+| `lab/` | Fault-injection lab and its latest results |
 | `deploy/` | Dockerfile, Compose stack, systemd unit |
 | `docs/` | Architecture, API, deployment, roadmap |
 

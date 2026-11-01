@@ -107,3 +107,33 @@ func nullIfEmpty(s string) *string {
 	}
 	return &s
 }
+
+// SeriesPoint is one time bucket of a test's results at a site.
+type SeriesPoint struct {
+	Time       time.Time `json:"t"`
+	Samples    int       `json:"n"`
+	Failures   int       `json:"fail"`
+	LatencyMS  *float64  `json:"latency_ms"`
+	LatencyP95 *float64  `json:"latency_p95_ms"`
+	LossPct    *float64  `json:"loss_pct"`
+}
+
+// Series aggregates a test's results into fixed buckets, for charts.
+func (s *Store) Series(ctx context.Context, tenantID, siteID, testID string, from, to time.Time, step time.Duration) ([]SeriesPoint, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT date_bin($5::interval, time, $3::timestamptz) AS bucket, count(*), count(*) FILTER (WHERE NOT success),
+		       percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE success),
+		       percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE success),
+		       avg(loss_pct)
+		FROM results
+		WHERE tenant_id = $1 AND site_id = $2 AND test_id = $6 AND time >= $3 AND time < $4
+		GROUP BY bucket ORDER BY bucket`, tenantID, siteID, from, to, step, testID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (SeriesPoint, error) {
+		var p SeriesPoint
+		err := r.Scan(&p.Time, &p.Samples, &p.Failures, &p.LatencyMS, &p.LatencyP95, &p.LossPct)
+		return p, err
+	})
+}
