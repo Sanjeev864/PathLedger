@@ -42,7 +42,7 @@ func enroll(t *testing.T, f fixture, siteID string) wire.EnrollResponse {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := f.s.EnrollAgent(ctx, wire.EnrollRequest{Token: tok, Hostname: "pi", OS: "linux", Arch: "arm64"})
+	resp, err := f.s.EnrollAgent(ctx, wire.EnrollRequest{Token: tok, Hostname: "frontdesk-pc", OS: "windows", Arch: "amd64"})
 	if err != nil {
 		t.Fatal(err)
 	}

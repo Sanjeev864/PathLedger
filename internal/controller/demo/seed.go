@@ -263,7 +263,8 @@ func Live(ctx context.Context, st *store.Store, tenantID string, o LiveOptions, 
 	defer tick.Stop()
 	for {
 		now := time.Now().UTC()
-		inject := o.Fault != Healthy && now.After(began.Add(o.After)) && now.Before(began.Add(o.After+o.For))
+		elapsed := time.Since(began)
+		inject := o.Fault != Healthy && elapsed >= o.After && elapsed < o.After+o.For
 		if inject != active {
 			active = inject
 			if active {

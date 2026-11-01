@@ -4,7 +4,7 @@ package fsperm
 
 import (
 	"fmt"
-	"strings"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -46,30 +46,54 @@ func restrictDir(dir string) error { return apply(dir, true) }
 
 func restrictFile(path string) error { return apply(path, false) }
 
-// private checks that the DACL grants access to no one but SYSTEM,
-// Administrators, the owner/current user and CREATOR OWNER.
+// private checks that every allow entry in the DACL is for SYSTEM,
+// Administrators, CREATOR OWNER or the current user, and that the DACL does
+// not inherit entries from the parent folder.
 func private(path string) (bool, error) {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return false, err
 	}
-	tok := windows.GetCurrentProcessToken()
-	u, err := tok.GetTokenUser()
+	ctl, _, err := sd.Control()
 	if err != nil {
 		return false, err
 	}
-	allowed := map[string]bool{"SY": true, "BA": true, "CO": true, u.User.Sid.String(): true}
-	s := sd.String()
-	i := strings.Index(s, "D:")
-	if i < 0 {
+	if ctl&windows.SE_DACL_PROTECTED == 0 {
 		return false, nil
 	}
-	for _, ace := range strings.Split(s[i:], "(")[1:] {
-		f := strings.Split(strings.TrimSuffix(strings.SplitN(ace, ")", 2)[0], ")"), ";")
-		if len(f) < 6 {
-			return false, nil
+	dacl, _, err := sd.DACL()
+	if err != nil || dacl == nil {
+		return false, err
+	}
+	u, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return false, err
+	}
+	var allowed []*windows.SID
+	for _, t := range []windows.WELL_KNOWN_SID_TYPE{windows.WinLocalSystemSid, windows.WinBuiltinAdministratorsSid, windows.WinCreatorOwnerSid} {
+		sid, err := windows.CreateWellKnownSid(t)
+		if err != nil {
+			return false, err
 		}
-		if f[0] == "A" && !allowed[f[5]] {
+		allowed = append(allowed, sid)
+	}
+	allowed = append(allowed, u.User.Sid)
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			return false, err
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			continue
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		ok := false
+		for _, a := range allowed {
+			if sid.Equals(a) {
+				ok = true
+			}
+		}
+		if !ok {
 			return false, nil
 		}
 	}
