@@ -1,6 +1,6 @@
 # Roadmap and status
 
-Last updated: 2026-11-01.
+Last updated: 2026-11-01 (Milestone 2).
 
 * **MVP** = Milestones 1 + 2: enough for a campus pilot that shows real ISP faults.
 * **Production release** = Milestone 3: the point at which a customer can be charged.
@@ -28,18 +28,21 @@ Last updated: 2026-11-01.
 | Hardened systemd unit for agents | Done | `systemd-analyze verify`; not yet run on a real device |
 | README, architecture, API, deployment docs | Done | — |
 
-## Milestone 2 — Insight (next; completes the MVP)
+## Milestone 2 — Insight ✅ complete (MVP)
 
-- [ ] Paris traceroute probe with per-hop loss and RTT
-- [ ] IP → ASN enrichment from free data (IPtoASN / RIR dumps)
-- [ ] Per-link baselines (hour-of-week) and anomaly events
-- [ ] Verdicts: local network / ISP / upstream / application
-- [ ] Alerts: email (SMTP), Telegram, generic webhook
-- [ ] Rate limiting per credential and per IP on enrolment
-- [ ] `PATCH /api/v1/tests/{id}`, API key list/revoke endpoints
-- [ ] SvelteKit dashboard: sites, link health, path view, event timeline
-- [ ] containerlab + `tc netem` fault-injection lab with precision/recall report
-- [ ] Campus pilot (requires permission from the college IT department)
+| Feature | Status | Verified by |
+| --- | --- | --- |
+| Paris traceroute probe (constant 5-tuple, per-hop loss/RTT, unreachable codes) | Done | Unit tests with a simulated network; real run over loopback; fault lab |
+| Hop scope (LAN / CGNAT / public) and IP → AS attribution (free IPtoASN data) | Done | Unit and ingest tests; fault lab |
+| Rolling baselines (7-day median + MAD) and per-test status | Done | Unit and database tests |
+| Explainable verdicts: local, ISP, upstream, DNS, app, offline | Done | Rule tests; engine tests against PostgreSQL; fault lab |
+| Site events with hysteresis; events API | Done | Engine and API tests |
+| Alerts: email, Telegram, HMAC-signed webhooks via a retrying outbox; SSRF guard | Done | End-to-end delivery tests (fake SMTP, Telegram and webhook servers) |
+| Rate limiting; `PATCH` tests; API key list/create/revoke | Done | API tests |
+| Aggregated series endpoint for charts | Done | API test |
+| Web dashboard (Svelte 5 + ECharts) embedded in the controller | Done | Type-checked; built in CI and Docker |
+| Fault-injection lab (network namespaces, real controller + agent) | Done | Runs in CI; latest results in [lab/results.md](../lab/results.md) |
+| Campus pilot | **Not started** | Needs written permission from the college IT department |
 
 ## Milestone 3 — Production release
 
@@ -65,11 +68,12 @@ failover built on PathLedger measurements.
 
 | Area | Issue | Plan |
 | --- | --- | --- |
-| Agents | Not yet run on a Raspberry Pi or OpenWrt router; only cross-compiled. | First device test in M2. |
-| Database | The TimescaleDB migration path is untested; plain PostgreSQL is fully tested. | Test with the `timescale/timescaledb` image in M2. |
-| ICMP | IPv4 only; targets resolving only to IPv6 fail with a `config` error. | Add ICMPv6 in M2. |
-| DNS | Uses Go's resolver: reports answers and timing, not RCODE, TTL or DNSSEC status. | Raw DNS client in M2 if customers need it. |
-| Time | Results are stamped with the agent's clock; no NTP drift check (CERT-In expects synchronised clocks). | Report clock offset in M2; reject skew > 5 min already. |
-| Storage | No retention policy; `results` grows indefinitely. | Retention + compression in M3. |
-| Security | No rate limiting yet. Credentials are 256-bit, so guessing is infeasible, but request floods are not throttled. | M2. |
+| Analytics | Packet loss on the ISP link shows up only on ICMP tests (TCP/HTTP retransmit and still succeed), so a lossy-but-up ISP link can be reported as a single-destination `app` problem. Latency-only degradation also depends on 30+ baseline samples and is not yet covered by the lab. | Correlate loss with traceroute hop loss and add loss/latency scenarios to the lab (M3). |
+| Analytics | Baselines are one 7-day median per test, not per hour of week, so busy-hour slowdowns that are "normal" may alert. | Hour-of-week buckets once pilots provide data. |
+| Analytics | A traceroute is at most 60 s old, so `local`/`upstream` verdicts can start as `isp` and be refined within a minute (the lab measures this). | Trigger an on-demand traceroute when a site turns unhealthy (M3). |
+| Agents | Not yet run on a Raspberry Pi or OpenWrt router; only cross-compiled. ICMP and traceroute are IPv4-only. | Device test and ICMPv6 in M3. |
+| Database | TimescaleDB path untested; no retention policy. | M3. |
+| Dashboard | Signs in with an API key held in the browser tab; no user accounts yet. Bundle is ~200 KB gzipped (mostly ECharts). | User accounts and roles in M3. |
+| Rate limits | Kept in memory per controller replica. | Shared limits only if several replicas are run. |
+| DNS probe | Reports answers and timing, not RCODE/TTL/DNSSEC. | Raw DNS client if customers need it. |
 | Product | No licence chosen. | Owner decision. |
