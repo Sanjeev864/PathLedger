@@ -8,6 +8,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -15,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"os"
 	"os/signal"
 	"strconv"
@@ -26,6 +28,7 @@ import (
 	"github.com/sanjeev864/pathledger/internal/controller/alert"
 	"github.com/sanjeev864/pathledger/internal/controller/analytics"
 	"github.com/sanjeev864/pathledger/internal/controller/api"
+	"github.com/sanjeev864/pathledger/internal/controller/auth"
 	"github.com/sanjeev864/pathledger/internal/controller/store"
 	"github.com/sanjeev864/pathledger/internal/enrich"
 	"github.com/sanjeev864/pathledger/internal/logging"
@@ -38,6 +41,8 @@ Commands:
   migrate        apply pending database migrations and exit
   tenant create  create a tenant and print its first API key
   apikey create  create an additional API key for a tenant
+  user create    create a dashboard user and add them to a tenant
+                 (password from PATHLEDGER_PASSWORD, or the first line of stdin)
   version        print the version
 
 Configuration (environment):
@@ -96,6 +101,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = tenantCreate(ctx, args, stdout, log)
 	case "apikey create":
 		err = apikeyCreate(ctx, args, stdout, log)
+	case "user create":
+		err = userCreate(ctx, args, os.Stdin, stdout, log)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usage)
 		return 2
@@ -170,6 +177,12 @@ func serve(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	go (&alert.Dispatcher{Store: st, Sender: senders, Log: log}).Run(ctx, 10*time.Second)
 
 	var opts []api.Option
+	if u := os.Getenv("PATHLEDGER_PUBLIC_URL"); u != "" {
+		opts = append(opts, api.WithPublicURL(u))
+	}
+	if e, ok := senders["email"].(*alert.Email); ok {
+		opts = append(opts, api.WithMailer(e))
+	}
 	if os.Getenv("PATHLEDGER_TRUST_PROXY") == "true" {
 		opts = append(opts, api.TrustProxyHeaders())
 	}
@@ -274,4 +287,54 @@ func alertSenders(log *slog.Logger) (alert.Router, error) {
 		log.Warn("PATHLEDGER_TELEGRAM_BOT_TOKEN not set; Telegram notifications are disabled")
 	}
 	return r, nil
+}
+
+func userCreate(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, log *slog.Logger) error {
+	fs := flag.NewFlagSet("user create", flag.ContinueOnError)
+	email := fs.String("email", "", "sign-in email")
+	name := fs.String("name", "", "display name")
+	tenant := fs.String("tenant", "", "tenant ID to join")
+	role := fs.String("role", "owner", "owner, admin or viewer")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	addr, err := mail.ParseAddress(*email)
+	if err != nil || *tenant == "" {
+		return errors.New("-email (valid address) and -tenant are required")
+	}
+	r := store.Role(*role)
+	if !r.Valid() {
+		return errors.New("-role must be owner, admin or viewer")
+	}
+	pw := os.Getenv("PATHLEDGER_PASSWORD")
+	if pw == "" {
+		line, _ := bufio.NewReader(stdin).ReadString('\n')
+		pw = strings.TrimRight(line, "\r\n")
+	}
+	if err := auth.CheckPasswordPolicy(pw); err != nil {
+		return err
+	}
+	hash, err := auth.HashPassword(pw)
+	if err != nil {
+		return err
+	}
+	return withStore(ctx, log, func(st *store.Store) error {
+		u, err := st.CreateUser(ctx, strings.ToLower(addr.Address), strings.TrimSpace(*name), hash)
+		if errors.Is(err, store.ErrConflict) {
+			if u, err = st.UserByEmail(ctx, strings.ToLower(addr.Address)); err != nil {
+				return err
+			}
+			fmt.Fprintln(stdout, "User exists; adding the membership only (password unchanged).")
+		} else if err != nil {
+			return err
+		}
+		if err := st.AddMembership(ctx, u.ID, *tenant, r); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("tenant %s not found", *tenant)
+			}
+			return err
+		}
+		fmt.Fprintf(stdout, "User %s is now %s of tenant %s.\n", u.Email, r, *tenant)
+		return nil
+	})
 }

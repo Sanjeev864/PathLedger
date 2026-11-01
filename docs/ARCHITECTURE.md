@@ -155,13 +155,27 @@ signed with per-channel HMAC-SHA256 secrets. Webhook connections are
 refused at dial time if the resolved address is not public (SSRF and DNS
 rebinding protection).
 
+## Users, roles and sessions
+
+People sign in with email and password (argon2id). A session is a random
+256-bit cookie (`HttpOnly`, `Secure`, `SameSite=Strict`) whose hash is stored
+with a per-session CSRF token; every state-changing request must echo the
+token in `X-CSRF-Token`. Sessions slide forward while used (24 h idle) and
+end on sign-out, password change or removal from the organisation.
+
+A user can belong to many tenants with a role in each (`owner`, `admin`,
+`viewer`), which is how an MSP's staff manage several customers from one
+account. A session is scoped to one tenant at a time; switching re-checks
+membership. API keys remain for automation and act as `admin`. People join
+through single-use, 7-day invitations bound to an email address.
+
 ## Dashboard
 
 `web/` is a Svelte 5 + TypeScript single-page app with ECharts, built by
 Vite into `internal/controller/webui/dist` and embedded in the controller
 binary, so a deployment is still one binary. It talks only to the same-origin
-API with an API key held in `sessionStorage`, and is served with a strict
-Content Security Policy. Charts use `/api/v1/series`, which aggregates in
+API using the session cookie (or, for automation, an API key held in
+`sessionStorage`), and is served with a strict Content Security Policy. Charts use `/api/v1/series`, which aggregates in
 PostgreSQL rather than shipping raw results to the browser.
 
 ## Fault-injection lab

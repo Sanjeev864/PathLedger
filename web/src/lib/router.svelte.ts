@@ -5,6 +5,7 @@ export type Route =
   | { name: 'events' }
   | { name: 'event'; id: string }
   | { name: 'setup' }
+  | { name: 'invite'; token: string }
 
 function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean)
@@ -15,6 +16,8 @@ function parse(hash: string): Route {
       return parts[1] ? { name: 'event', id: parts[1] } : { name: 'events' }
     case 'setup':
       return { name: 'setup' }
+    case 'invite':
+      return parts[1] ? { name: 'invite', token: parts[1] } : { name: 'overview' }
     default:
       return { name: 'overview' }
   }

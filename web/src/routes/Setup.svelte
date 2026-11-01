@@ -1,5 +1,17 @@
 <script lang="ts">
-  import { api, get, targetLabel, type List, type Site, type Test, type Channel, type ProbeKind } from '../lib/api'
+  import { api, get, targetLabel, canWrite, type List, type Site, type Test, type Channel, type ProbeKind, type Role } from '../lib/api'
+  import { session } from '../lib/session.svelte'
+
+  const writable = $derived(canWrite(session.me))
+  const isOwner = $derived(session.me?.role === 'owner')
+
+  interface Member { user_id: string; email: string; name: string; role: Role; last_login_at: string | null }
+  interface Invitation { id: string; email: string; role: Role; expires_at: string }
+  let members = $state<Member[]>([])
+  let invitations = $state<Invitation[]>([])
+  let invEmail = $state('')
+  let invRole = $state<Role>('viewer')
+  let invLink = $state('')
 
   let sites = $state<Site[]>([])
   let tests = $state<Test[]>([])
@@ -17,6 +29,8 @@
       sites = s.items
       tests = t.items
       channels = c.items
+      members = (await get<List<Member>>('/api/v1/members')).items
+      invitations = writable ? (await get<List<Invitation>>('/api/v1/invitations')).items : []
     } catch (err) {
       error = (err as Error).message
     }
@@ -36,6 +50,17 @@
       error = (err as Error).message
     }
   }
+
+  function invite(e: SubmitEvent) {
+    e.preventDefault()
+    run(async () => {
+      const r = await api<{ link: string; token: string; emailed: boolean }>('POST', '/api/v1/invitations', { email: invEmail, role: invRole })
+      invLink = r.link.startsWith('http') ? r.link : `${location.origin}${location.pathname}#/invite/${r.token}`
+      note = r.emailed ? `Invitation emailed to ${invEmail}.` : 'Invitation created — send the link below to the person you invited.'
+      invEmail = ''
+    })
+  }
+  const assignable = $derived<Role[]>(isOwner ? ['viewer', 'admin', 'owner'] : ['viewer', 'admin'])
 
   // Sites
   let siteName = $state('')
@@ -115,11 +140,12 @@
 
   <section class="panel stack">
     <h2>Sites</h2>
-    <form class="row" onsubmit={addSite}>
+    {#if !writable}<p class="muted">You have view-only access. Ask an admin to make changes.</p>{/if}
+    {#if writable}<form class="row" onsubmit={addSite}>
       <label>Name <input bind:value={siteName} required maxlength="200" placeholder="Jayanagar branch" /></label>
       <label>Location <input bind:value={siteLocation} maxlength="500" placeholder="Bengaluru" /></label>
       <button class="primary" type="submit">Add site</button>
-    </form>
+    </form>{/if}
     {#if sites.length}
       <table>
         <thead><tr><th>Site</th><th>Location</th><th></th></tr></thead>
@@ -128,7 +154,7 @@
             <tr>
               <td><a href="#/sites/{s.id}">{s.name}</a></td>
               <td class="muted">{s.location}</td>
-              <td><button onclick={() => issueToken(s)}>Install an agent</button></td>
+              <td>{#if writable}<button onclick={() => issueToken(s)}>Install an agent</button>{/if}</td>
             </tr>
           {/each}
         </tbody>
@@ -153,7 +179,7 @@ sudo systemctl enable --now pathledger-agent</code>
   <section class="panel stack">
     <h2>Tests</h2>
     <p class="muted">Monitor at least two different destinations per site, so PathLedger can tell a site-wide outage from a single failing service.</p>
-    <form class="row" onsubmit={addTest}>
+    {#if writable}<form class="row" onsubmit={addTest}>
       <label>Kind
         <select bind:value={tKind}>{#each kinds as k}<option value={k}>{k}</option>{/each}</select>
       </label>
@@ -166,7 +192,7 @@ sudo systemctl enable --now pathledger-agent</code>
       </label>
       <label>Every (s) <input type="number" bind:value={tInterval} min="10" max="3600" style="width: 90px" /></label>
       <button class="primary" type="submit">Add test</button>
-    </form>
+    </form>{/if}
     {#if tests.length}
       <table>
         <thead><tr><th>Test</th><th>Sites</th><th>Every</th><th></th></tr></thead>
@@ -176,10 +202,10 @@ sudo systemctl enable --now pathledger-agent</code>
               <td class="mono">{targetLabel(t)}{#if !t.enabled}<span class="muted"> (paused)</span>{/if}</td>
               <td>{siteName_(t.site_id)}</td>
               <td class="num">{t.interval_seconds}s</td>
-              <td class="row">
+              <td class="row">{#if writable}
                 <button onclick={() => run(() => api('PATCH', `/api/v1/tests/${t.id}`, { enabled: !t.enabled }))}>{t.enabled ? 'Pause' : 'Resume'}</button>
                 <button onclick={() => confirm(`Delete ${targetLabel(t)}? Its history is kept.`) && run(() => api('DELETE', `/api/v1/tests/${t.id}`))}>Delete</button>
-              </td>
+              {/if}</td>
             </tr>
           {/each}
         </tbody>
@@ -189,7 +215,7 @@ sudo systemctl enable --now pathledger-agent</code>
 
   <section class="panel stack">
     <h2>Notifications</h2>
-    <form class="row" onsubmit={addChannel}>
+    {#if writable}<form class="row" onsubmit={addChannel}>
       <label>Kind
         <select bind:value={cKind}>
           <option value="email">Email</option>
@@ -203,7 +229,7 @@ sudo systemctl enable --now pathledger-agent</code>
         <input bind:value={cValue} required placeholder={cKind === 'email' ? 'noc@example.com' : cKind === 'telegram' ? '-1001234567890' : 'https://hooks.example.com/pathledger'} />
       </label>
       <button class="primary" type="submit">Add channel</button>
-    </form>
+    </form>{/if}
     {#if newSecret}
       <p class="notice">Webhook signing secret (shown once): <span class="mono">{newSecret}</span><br />Verify the <span class="mono">X-PathLedger-Signature</span> header as HMAC-SHA256 of the request body.</p>
     {/if}
@@ -215,10 +241,61 @@ sudo systemctl enable --now pathledger-agent</code>
             <tr>
               <td>{c.name}</td>
               <td>{c.kind}</td>
-              <td class="row">
+              <td class="row">{#if writable}
                 <button onclick={() => run(() => api('POST', `/api/v1/channels/${c.id}/test`), 'Test notification queued.')}>Send test</button>
                 <button onclick={() => confirm(`Delete ${c.name}?`) && run(() => api('DELETE', `/api/v1/channels/${c.id}`))}>Delete</button>
-              </td>
+              {/if}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  </section>
+
+  <section class="panel stack">
+    <h2>People</h2>
+    {#if writable}
+      <form class="row" onsubmit={invite}>
+        <label class="grow">Email <input type="email" bind:value={invEmail} required placeholder="colleague@example.com" /></label>
+        <label>Role
+          <select bind:value={invRole}>{#each assignable as r}<option value={r}>{r}</option>{/each}</select>
+        </label>
+        <button class="primary" type="submit">Invite</button>
+      </form>
+      {#if invLink}<code class="block">{invLink}</code>{/if}
+    {/if}
+    <table>
+      <thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead>
+      <tbody>
+        {#each members as m}
+          <tr>
+            <td>{m.name || m.email}{#if m.name}<br /><span class="muted small">{m.email}</span>{/if}</td>
+            <td>
+              {#if writable && (isOwner || m.role !== 'owner') && m.user_id !== session.me?.user?.id}
+                <select value={m.role} aria-label="Role for {m.email}"
+                  onchange={(e) => run(() => api('PATCH', `/api/v1/members/${m.user_id}`, { role: (e.target as HTMLSelectElement).value }), 'Role updated.')}>
+                  {#each assignable as r}<option value={r}>{r}</option>{/each}
+                </select>
+              {:else}{m.role}{/if}
+            </td>
+            <td class="muted">{m.last_login_at ? new Date(m.last_login_at).toLocaleString() : 'never'}</td>
+            <td>
+              {#if writable && (isOwner || m.role !== 'owner') && m.user_id !== session.me?.user?.id}
+                <button onclick={() => confirm(`Remove ${m.email}?`) && run(() => api('DELETE', `/api/v1/members/${m.user_id}`), 'Removed.')}>Remove</button>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+    {#if invitations.length}
+      <h2>Pending invitations</h2>
+      <table>
+        <tbody>
+          {#each invitations as i}
+            <tr>
+              <td>{i.email}</td><td>{i.role}</td><td class="muted">expires {new Date(i.expires_at).toLocaleDateString()}</td>
+              <td><button onclick={() => run(() => api('DELETE', `/api/v1/invitations/${i.id}`), 'Invitation revoked.')}>Revoke</button></td>
             </tr>
           {/each}
         </tbody>
@@ -230,4 +307,5 @@ sudo systemctl enable --now pathledger-agent</code>
 <style>
   form.row { align-items: flex-end; }
   .grow { flex: 1; min-width: 200px; }
+  .small { font-size: 0.82rem; }
 </style>

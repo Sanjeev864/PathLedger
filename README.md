@@ -47,7 +47,9 @@ Requirements: Go 1.24+, PostgreSQL 14+ (or Docker for the Compose stack).
 make build                      # builds bin/pathledger-controller and bin/pathledger-agent
 
 export PATHLEDGER_DATABASE_URL='postgres://user:pass@localhost:5432/pathledger?sslmode=disable'
-./bin/pathledger-controller tenant create -name "My Company"   # prints an API key once
+./bin/pathledger-controller tenant create -name "My Company"   # prints the tenant ID and an API key once
+echo 'a strong password' | ./bin/pathledger-controller user create \
+    -email you@example.com -name "Your Name" -tenant <tenant-id> -role owner
 ./bin/pathledger-controller serve                               # listens on :8080
 ```
 
@@ -70,7 +72,10 @@ PATHLEDGER_ENROLL_TOKEN=$TOKEN ./bin/pathledger-agent \
 ```
 
 Results appear at `GET /api/v1/results`, and the dashboard is served at
-`http://localhost:8080/` (sign in with the API key). Plain `http://` is
+`http://localhost:8080/`. Sign in with the email and password you created;
+invite colleagues from **Setup → People** as viewers, admins or owners.
+MSP staff who belong to several organisations switch between them from
+the header. Plain `http://` is
 accepted only for localhost; any other controller URL must be `https://`.
 
 The dashboard is embedded at build time: run `make web` (Node 22+) before

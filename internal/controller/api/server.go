@@ -48,6 +48,26 @@ type Store interface {
 	ListAPIKeys(ctx context.Context, tenantID string) ([]store.APIKey, error)
 	RevokeAPIKey(ctx context.Context, tenantID, keyID string) error
 	Series(ctx context.Context, tenantID, siteID, testID string, from, to time.Time, step time.Duration) ([]store.SeriesPoint, error)
+
+	CreateUser(ctx context.Context, email, name, hash string) (store.User, error)
+	UserByEmail(ctx context.Context, email string) (store.User, error)
+	UserByID(ctx context.Context, id string) (store.User, error)
+	RecordLogin(ctx context.Context, userID string) error
+	SetPassword(ctx context.Context, userID, hash string) error
+	Memberships(ctx context.Context, userID string) ([]store.Membership, error)
+	Members(ctx context.Context, tenantID string) ([]store.Member, error)
+	MemberRole(ctx context.Context, tenantID, userID string) (store.Role, error)
+	SetMemberRole(ctx context.Context, tenantID, userID string, role store.Role) error
+	RemoveMember(ctx context.Context, tenantID, userID string) error
+	CreateSession(ctx context.Context, userID, tenantID string, ttl time.Duration) (string, store.Session, error)
+	SessionByToken(ctx context.Context, token string, ttl time.Duration) (store.Session, error)
+	SwitchSessionTenant(ctx context.Context, sessionID, userID, tenantID string) error
+	DeleteSession(ctx context.Context, id string) error
+	CreateInvitation(ctx context.Context, tenantID, email string, role store.Role, invitedBy *string, ttl time.Duration) (store.Invitation, string, error)
+	InvitationByToken(ctx context.Context, token string) (store.Invitation, error)
+	AcceptInvitation(ctx context.Context, token, userID string) (store.Invitation, error)
+	ListInvitations(ctx context.Context, tenantID string) ([]store.Invitation, error)
+	RevokeInvitation(ctx context.Context, tenantID, id string) error
 }
 
 // Server serves the PathLedger API.
@@ -59,7 +79,10 @@ type Server struct {
 	allowHTTPWebhooks bool
 	trustProxy        bool
 
-	agentLimit, mgmtLimit, enrollLimit *limiter
+	agentLimit, mgmtLimit, enrollLimit, loginLimit *limiter
+
+	mailer    Mailer
+	publicURL string
 }
 
 // TrustProxyHeaders makes rate limits key on X-Forwarded-For; enable only
@@ -72,6 +95,7 @@ func WithLimits(agent, management, enroll Limit) Option {
 		s.agentLimit = newLimiter(agent, s.now)
 		s.mgmtLimit = newLimiter(management, s.now)
 		s.enrollLimit = newLimiter(enroll, s.now)
+		s.loginLimit = newLimiter(enroll, s.now)
 	}
 }
 
@@ -87,6 +111,7 @@ func New(st Store, log *slog.Logger, opts ...Option) *Server {
 	s.agentLimit = newLimiter(limitAgent, s.now)
 	s.mgmtLimit = newLimiter(limitManagement, s.now)
 	s.enrollLimit = newLimiter(limitEnroll, s.now)
+	s.loginLimit = newLimiter(limitLogin, s.now)
 	for _, o := range opts {
 		o(s)
 	}
@@ -106,28 +131,43 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/agent/results", s.agentAuth(s.ingest))
 
 	// Management API.
-	mux.Handle("GET /api/v1/sites", s.tenantAuth(s.listSites))
-	mux.Handle("POST /api/v1/sites", s.tenantAuth(s.createSite))
-	mux.Handle("GET /api/v1/sites/{id}", s.tenantAuth(s.getSite))
-	mux.Handle("POST /api/v1/sites/{id}/enrollment-tokens", s.tenantAuth(s.createEnrollmentToken))
-	mux.Handle("GET /api/v1/agents", s.tenantAuth(s.listAgents))
-	mux.Handle("DELETE /api/v1/agents/{id}", s.tenantAuth(s.revokeAgent))
-	mux.Handle("GET /api/v1/tests", s.tenantAuth(s.listTests))
-	mux.Handle("POST /api/v1/tests", s.tenantAuth(s.createTest))
-	mux.Handle("PATCH /api/v1/tests/{id}", s.tenantAuth(s.updateTest))
-	mux.Handle("DELETE /api/v1/tests/{id}", s.tenantAuth(s.deleteTest))
-	mux.Handle("GET /api/v1/api-keys", s.tenantAuth(s.listAPIKeys))
-	mux.Handle("POST /api/v1/api-keys", s.tenantAuth(s.createAPIKey))
-	mux.Handle("DELETE /api/v1/api-keys/{id}", s.tenantAuth(s.revokeAPIKey))
-	mux.Handle("GET /api/v1/results", s.tenantAuth(s.queryResults))
-	mux.Handle("GET /api/v1/series", s.tenantAuth(s.series))
-	mux.Handle("GET /api/v1/events", s.tenantAuth(s.listEvents))
-	mux.Handle("GET /api/v1/events/{id}", s.tenantAuth(s.getEvent))
-	mux.Handle("GET /api/v1/channels", s.tenantAuth(s.listChannels))
-	mux.Handle("POST /api/v1/channels", s.tenantAuth(s.createChannel))
-	mux.Handle("DELETE /api/v1/channels/{id}", s.tenantAuth(s.deleteChannel))
-	mux.Handle("POST /api/v1/channels/{id}/test", s.tenantAuth(s.testChannel))
-	mux.Handle("GET /api/v1/deliveries", s.tenantAuth(s.listDeliveries))
+	mux.Handle("GET /api/v1/sites", s.read(s.listSites))
+	mux.Handle("POST /api/v1/sites", s.write(s.createSite))
+	mux.Handle("GET /api/v1/sites/{id}", s.read(s.getSite))
+	mux.Handle("POST /api/v1/sites/{id}/enrollment-tokens", s.write(s.createEnrollmentToken))
+	mux.Handle("GET /api/v1/agents", s.read(s.listAgents))
+	mux.Handle("DELETE /api/v1/agents/{id}", s.write(s.revokeAgent))
+	mux.Handle("GET /api/v1/tests", s.read(s.listTests))
+	mux.Handle("POST /api/v1/tests", s.write(s.createTest))
+	mux.Handle("PATCH /api/v1/tests/{id}", s.write(s.updateTest))
+	mux.Handle("DELETE /api/v1/tests/{id}", s.write(s.deleteTest))
+	mux.Handle("GET /api/v1/api-keys", s.write(s.listAPIKeys))
+	mux.Handle("POST /api/v1/api-keys", s.write(s.createAPIKey))
+	mux.Handle("DELETE /api/v1/api-keys/{id}", s.write(s.revokeAPIKey))
+	mux.Handle("GET /api/v1/results", s.read(s.queryResults))
+	mux.Handle("GET /api/v1/series", s.read(s.series))
+	mux.Handle("GET /api/v1/events", s.read(s.listEvents))
+	mux.Handle("GET /api/v1/events/{id}", s.read(s.getEvent))
+	mux.Handle("GET /api/v1/channels", s.read(s.listChannels))
+	mux.Handle("POST /api/v1/channels", s.write(s.createChannel))
+	mux.Handle("DELETE /api/v1/channels/{id}", s.write(s.deleteChannel))
+	mux.Handle("POST /api/v1/channels/{id}/test", s.write(s.testChannel))
+	mux.Handle("GET /api/v1/deliveries", s.read(s.listDeliveries))
+
+	// People and sessions.
+	mux.HandleFunc("POST /api/v1/auth/login", s.login)
+	mux.Handle("GET /api/v1/auth/me", s.read(s.me))
+	mux.Handle("POST /api/v1/auth/logout", s.sessionOnly(s.logout))
+	mux.Handle("POST /api/v1/auth/switch", s.sessionOnly(s.switchTenant))
+	mux.Handle("POST /api/v1/auth/password", s.sessionOnly(s.changePassword))
+	mux.Handle("GET /api/v1/members", s.read(s.listMembers))
+	mux.Handle("PATCH /api/v1/members/{id}", s.write(s.memberRoleChange))
+	mux.Handle("DELETE /api/v1/members/{id}", s.write(s.removeMember))
+	mux.Handle("GET /api/v1/invitations", s.write(s.listInvitations))
+	mux.Handle("POST /api/v1/invitations", s.write(s.createInvitation))
+	mux.Handle("DELETE /api/v1/invitations/{id}", s.write(s.revokeInvitation))
+	mux.HandleFunc("GET /api/v1/invitations/token/{token}", s.inspectInvitation)
+	mux.HandleFunc("POST /api/v1/invitations/token/{token}/accept", s.acceptInvitation)
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")

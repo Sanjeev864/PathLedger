@@ -67,14 +67,19 @@ func (e *Email) Send(ctx context.Context, ch store.Channel, p Payload) error {
 	if err != nil {
 		return err
 	}
+	return e.SendText(ctx, to, p.Subject(), p.Text())
+}
+
+// SendText sends a plain-text email; it also delivers user invitations.
+func (e *Email) SendText(ctx context.Context, to []string, subject, body string) error {
 	from, err := mail.ParseAddress(e.Config.From)
 	if err != nil {
 		return permanent("invalid sender address %q", e.Config.From)
 	}
 	var msg bytes.Buffer
 	fmt.Fprintf(&msg, "From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n",
-		from.String(), strings.Join(to, ", "), sanitizeHeader(p.Subject()), time.Now().UTC().Format(time.RFC1123Z))
-	msg.WriteString(strings.ReplaceAll(p.Text(), "\n", "\r\n"))
+		from.String(), strings.Join(to, ", "), sanitizeHeader(subject), time.Now().UTC().Format(time.RFC1123Z))
+	msg.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
 
 	addr := net.JoinHostPort(e.Config.Host, strconv.Itoa(e.Config.Port))
 	var auth smtp.Auth

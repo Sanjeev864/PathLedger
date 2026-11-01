@@ -175,31 +175,6 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// tenantAuth requires a valid management API key.
-func (s *Server) tenantAuth(h http.HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tok, ok := auth.BearerToken(r)
-		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "an API key is required (Authorization: Bearer plk_...)")
-			return
-		}
-		tenant, keyID, err := s.store.AuthenticateAPIKey(r.Context(), tok)
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or revoked API key")
-			return
-		}
-		if err != nil {
-			s.storeError(w, r, err, "api key")
-			return
-		}
-		if s.rateLimited(w, s.mgmtLimit, "tenant:"+tenant) {
-			return
-		}
-		ctx := context.WithValue(r.Context(), keyTenant, tenant)
-		h(w, r.WithContext(context.WithValue(ctx, keyAPIKey, keyID)))
-	})
-}
-
 // agentAuth requires a valid, unrevoked agent credential.
 func (s *Server) agentAuth(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

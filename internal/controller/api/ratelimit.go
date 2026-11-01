@@ -22,6 +22,8 @@ var (
 	limitAgent      = Limit{Rate: 1, Burst: 20}
 	limitManagement = Limit{Rate: 10, Burst: 50}
 	limitEnroll     = Limit{Rate: 0.2, Burst: 10} // per client IP
+	// Sign-in attempts per IP and per email: ~6 a minute after a burst of 10.
+	limitLogin = Limit{Rate: 0.1, Burst: 10}
 )
 
 type bucket struct {

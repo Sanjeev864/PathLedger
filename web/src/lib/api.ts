@@ -1,6 +1,6 @@
-// Thin client for the PathLedger management API. The API key lives in
-// sessionStorage only (cleared when the tab closes); user accounts with
-// proper sessions arrive in Milestone 3.
+// Client for the PathLedger management API. Signed-in users authenticate
+// with an HttpOnly session cookie plus a CSRF token held only in memory;
+// automation can still use an API key, kept in sessionStorage for the tab.
 
 const KEY = 'pathledger.apiKey'
 
@@ -21,6 +21,11 @@ export function setKey(k: string | null) {
   }
 }
 
+let csrf = ''
+export function setCSRF(t: string) {
+  csrf = t
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -32,23 +37,42 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {}
+  const key = getKey()
+  if (key) headers.Authorization = `Bearer ${key}`
+  else if (csrf && method !== 'GET') headers['X-CSRF-Token'] = csrf
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(path, {
     method,
-    headers: {
-      Authorization: `Bearer ${getKey() ?? ''}`,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
+    headers,
+    credentials: 'same-origin',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (res.status === 204) return undefined as T
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     const e = data?.error ?? {}
-    if (res.status === 401) setKey(null)
+    if (res.status === 401 && !path.startsWith('/api/v1/auth/login')) {
+      setKey(null)
+      window.dispatchEvent(new Event('pathledger:signed-out'))
+    }
     throw new ApiError(res.status, e.code ?? 'http_error', e.message ?? res.statusText)
   }
   return data as T
 }
+
+export type Role = 'owner' | 'admin' | 'viewer'
+
+export interface Me {
+  auth: 'session' | 'api_key'
+  user: { id: string; email: string; name: string } | null
+  tenant_id: string
+  role: Role
+  csrf_token?: string
+  memberships: { tenant_id: string; tenant_name: string; role: Role }[]
+}
+
+export const canWrite = (me: Me | null) => me?.role === 'admin' || me?.role === 'owner'
 
 export const get = <T>(path: string) => api<T>('GET', path)
 

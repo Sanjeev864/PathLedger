@@ -7,13 +7,49 @@ response carries an `X-Request-ID` header; quote it when reporting problems.
 
 | Credential | Prefix | Used by | Header |
 | --- | --- | --- | --- |
-| API key | `plk_` | Dashboard, scripts, CLI tools | `Authorization: Bearer plk_...` |
+| Session cookie | `pls_` | People using the dashboard | `pathledger_session` cookie (HttpOnly, Secure, SameSite=Strict) plus `X-CSRF-Token` on every non-GET request |
+| API key | `plk_` | Scripts and integrations (acts as `admin`) | `Authorization: Bearer plk_...` |
 | Enrolment token | `ple_` | Agent, once, to enrol | Sent in the enrol request body |
 | Agent token | `pla_` | Agent, for every call after enrolment | `Authorization: Bearer pla_...` |
 
 API keys are created with `pathledger-controller tenant create` or
 `pathledger-controller apikey create`. Every credential is shown once; the
 controller stores only its SHA-256 hash.
+
+### Roles
+
+Every management endpoint requires a minimum role in the current
+organisation (tenant):
+
+| Role | Can |
+| --- | --- |
+| `viewer` | Read everything: sites, agents, tests, results, events, channels, members |
+| `admin` | Also create, change and delete sites, tests, channels, API keys, agents; invite and manage viewers and admins |
+| `owner` | Also invite, promote, demote and remove owners. An organisation always keeps at least one owner |
+
+A request below the required role gets `403 forbidden`.
+
+### Sessions and people
+
+| Method | Path | Auth | Body | Notes |
+| --- | --- | --- | --- | --- |
+| `POST` | `/api/v1/auth/login` | none | `{"email", "password", "tenant_id"?}` | Sets the session cookie; returns the `me` object including `csrf_token`. Rate-limited per IP and per email |
+| `GET` | `/api/v1/auth/me` | any | | `{"auth": "session"|"api_key", "user", "tenant_id", "role", "csrf_token", "memberships": [{"tenant_id", "tenant_name", "role"}]}` |
+| `POST` | `/api/v1/auth/logout` | session | | `204` |
+| `POST` | `/api/v1/auth/switch` | session | `{"tenant_id"}` | Moves the session to another organisation the user belongs to (MSPs) |
+| `POST` | `/api/v1/auth/password` | session | `{"current_password", "new_password"}` | Ends all the user's sessions |
+| `GET` | `/api/v1/members` | viewer | | `{"items": [{"user_id", "email", "name", "role", "last_login_at"}]}` |
+| `PATCH` | `/api/v1/members/{user_id}` | admin | `{"role"}` | `409 last_owner` if it would leave no owner |
+| `DELETE` | `/api/v1/members/{user_id}` | admin | | Ends their sessions in this organisation |
+| `GET` | `/api/v1/invitations` | admin | | Pending invitations |
+| `POST` | `/api/v1/invitations` | admin | `{"email", "role"}` | `201 {"token", "link", "emailed"}`; valid 7 days; emailed when SMTP and `PATHLEDGER_PUBLIC_URL` are set |
+| `DELETE` | `/api/v1/invitations/{id}` | admin | | `204` |
+| `GET` | `/api/v1/invitations/token/{token}` | none | | What the invitation is for, and whether the email already has an account |
+| `POST` | `/api/v1/invitations/token/{token}/accept` | none | `{"name", "password"}` | New users choose a password (10–128 characters); existing users enter theirs. The account email must match the invitation. Signs the user in |
+
+Passwords are stored as argon2id hashes (19 MiB, 2 iterations). Sign-in
+failures return the same message and take the same time whether or not
+the email exists.
 
 ## Errors
 
@@ -26,7 +62,8 @@ Non-2xx responses share one shape:
 | Status | Codes |
 | --- | --- |
 | 400 | `invalid_json`, `invalid_query`, `invalid_encoding` |
-| 401 | `unauthorized`, `invalid_token` |
+| 401 | `unauthorized`, `invalid_token`, `invalid_credentials` |
+| 403 | `forbidden` (role too low), `csrf_failed`, `no_tenant` |
 | 429 | `rate_limited` (see `Retry-After`) |
 | 404 | `not_found` (also returned for resources owned by another tenant) |
 | 409 | `conflict` |
@@ -117,7 +154,7 @@ Response: `{"accepted": 1, "rejected": 0}`. A result is rejected (not retried)
 if its test is not assigned to the agent's site, it fails validation, or its
 timestamp is more than 5 minutes in the future or 30 days in the past.
 
-## Management API (API key)
+## Management API (session or API key)
 
 ### Sites
 

@@ -20,6 +20,8 @@ const (
 	PrefixAPIKey     = "plk_"
 	PrefixEnrollment = "ple_"
 	PrefixAgent      = "pla_"
+	PrefixSession    = "pls_"
+	PrefixInvite     = "pli_"
 )
 
 const secretBytes = 32
