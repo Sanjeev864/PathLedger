@@ -40,7 +40,7 @@ Last updated: 2026-11-01 (Milestone 2).
 | Alerts: email, Telegram, HMAC-signed webhooks via a retrying outbox; SSRF guard | Done | End-to-end delivery tests (fake SMTP, Telegram and webhook servers) |
 | Rate limiting; `PATCH` tests; API key list/create/revoke | Done | API tests |
 | Aggregated series endpoint for charts | Done | API test |
-| Web dashboard (Svelte 5 + ECharts) embedded in the controller | Done | Type-checked; built in CI and Docker |
+| Web dashboard (Svelte 5 + ECharts) embedded in the controller | Done | Type-checked; built in CI and Docker; checked in a real browser (light, dark, phone width) against lab data |
 | Fault-injection lab (network namespaces, real controller + agent) | Done | Runs in CI; latest results in [lab/results.md](../lab/results.md) |
 | Campus pilot | **Not started** | Needs written permission from the college IT department |
 
@@ -70,6 +70,7 @@ failover built on PathLedger measurements.
 | --- | --- | --- |
 | Analytics | Packet loss on the ISP link shows up only on ICMP tests (TCP/HTTP retransmit and still succeed), so a lossy-but-up ISP link can be reported as a single-destination `app` problem. Latency-only degradation also depends on 30+ baseline samples and is not yet covered by the lab. | Correlate loss with traceroute hop loss and add loss/latency scenarios to the lab (M3). |
 | Analytics | Baselines are one 7-day median per test, not per hour of week, so busy-hour slowdowns that are "normal" may alert. | Hour-of-week buckets once pilots provide data. |
+| Analytics | Fixed: during recovery, a network incident was relabelled "application" as some tests came back first. Network verdicts are now kept until the event resolves, and the lab checks the stored verdict after recovery. | — |
 | Analytics | A traceroute is at most 60 s old, so `local`/`upstream` verdicts can start as `isp` and be refined within a minute (the lab measures this). | Trigger an on-demand traceroute when a site turns unhealthy (M3). |
 | Agents | Not yet run on a Raspberry Pi or OpenWrt router; only cross-compiled. ICMP and traceroute are IPv4-only. | Device test and ICMPv6 in M3. |
 | Database | TimescaleDB path untested; no retention policy. | M3. |

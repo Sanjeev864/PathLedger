@@ -42,7 +42,7 @@
   <div class="row spread">
     <div>
       <h1>Sites</h1>
-      <p class="muted">{sites.length} sites · {open.length === 0 ? 'no open problems' : `${open.length} open problem${open.length > 1 ? 's' : ''}`}</p>
+      <p class="muted">{sites.length} site{sites.length === 1 ? '' : 's'} · {open.length === 0 ? 'no open problems' : `${open.length} open problem${open.length > 1 ? 's' : ''}`}</p>
     </div>
     <a class="button" href="#/setup">Add a site</a>
   </div>

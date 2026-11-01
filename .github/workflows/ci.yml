@@ -77,7 +77,7 @@ jobs:
           PATHLEDGER_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/pathledger_lab?sslmode=disable
         run: |
           psql "postgres://postgres:postgres@127.0.0.1:5432/postgres" -c "CREATE DATABASE pathledger_lab"
-          sudo -E python3 -u lab/faultlab.py --bin ./bin --out lab/results.md
+          sudo env PATHLEDGER_DATABASE_URL="$PATHLEDGER_DATABASE_URL" python3 -u lab/faultlab.py --bin ./bin --out lab/results.md
       - name: Publish lab results
         if: always()
         run: test -f lab/results.md && cat lab/results.md >> "$GITHUB_STEP_SUMMARY" || true

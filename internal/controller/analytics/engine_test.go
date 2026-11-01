@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -223,5 +224,31 @@ func TestEngineRefreshesBaselines(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("baseline not attached to window rows: %+v", rows)
+	}
+}
+
+func TestEngineKeepsNetworkVerdictWhileRecovering(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	w.report(t, 0, map[string]bool{}, 4) // everything down: ISP
+	if err := w.engine.Evaluate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Partial recovery: ICMP back, the HTTP service not yet.
+	w.current = w.current.Add(Window)
+	ok := w.allOK()
+	ok[w.tests[0].ID] = false
+	w.report(t, 0, ok, 4)
+	if err := w.engine.Evaluate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := w.s.ListEvents(ctx, w.tenant.ID, store.EventFilter{Limit: 10})
+	if len(events) != 1 || events[0].Verdict != string(VerdictISP) || events[0].Evidence[0] != "recovering: some tests have returned to normal" {
+		t.Fatalf("network verdict was relabelled during recovery: %+v", events)
+	}
+	for _, n := range w.rec.list() {
+		if strings.HasPrefix(n, "verdict_changed") {
+			t.Fatalf("recovery must not notify a verdict change: %v", w.rec.list())
+		}
 	}
 }

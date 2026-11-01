@@ -159,6 +159,13 @@ func (e *Engine) evaluate(ctx context.Context) error {
 			e.log.Info("event opened", "event_id", created.ID, "site_id", site, "verdict", a.Verdict)
 			e.notify(ctx, ChangeOpened, created)
 		default:
+			if networkVerdict(Verdict(ev.Verdict)) && (a.Verdict == VerdictApp || a.Verdict == VerdictUnknown) {
+				// A network fault recovering: some tests come back before
+				// others, which looks like a single-service problem. Keep the
+				// original diagnosis rather than relabelling the incident.
+				a.Verdict, a.Summary = Verdict(ev.Verdict), ev.Summary
+				a.Evidence = append([]string{"recovering: some tests have returned to normal"}, a.Evidence...)
+			}
 			changed := ev.Verdict != string(a.Verdict)
 			ev.Verdict, ev.Summary, ev.Evidence, ev.AffectedTests, ev.UpdatedAt = string(a.Verdict), a.Summary, a.Evidence, a.Affected, now
 			if err := e.store.RefreshEvent(ctx, ev, now); err != nil {
@@ -294,4 +301,13 @@ func firstPublicASN(hops []wire.Hop) int {
 		}
 	}
 	return 0
+}
+
+// networkVerdict reports whether v blames the path rather than a service.
+func networkVerdict(v Verdict) bool {
+	switch v {
+	case VerdictLocal, VerdictISP, VerdictUpstream, VerdictOffline:
+		return true
+	}
+	return false
 }

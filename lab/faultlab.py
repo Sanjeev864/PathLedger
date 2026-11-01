@@ -325,6 +325,11 @@ def main():
             t1 = time.time()
             cleared = wait(lambda: not open_event(api, site["id"]), args.timeout, 2)
             t_clear = time.time() - t1 if cleared else None
+            # The incident's recorded verdict must survive recovery too.
+            stored = api.call("GET", f"/api/v1/events/{final['id']}")["verdict"] if final else "none"
+            if stored != got:
+                log(f"  stored verdict after recovery: {stored}")
+                got = f"{got} (stored as {stored})"
             ok = got == want and t_clear is not None
             failures += 0 if ok else 1
             rows.append((name, want, got, t_first, t_correct, t_clear, ok, (final or {}).get("evidence", [])))

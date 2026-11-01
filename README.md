@@ -97,7 +97,8 @@ make test                       # unit tests (database tests skip)
 PATHLEDGER_TEST_DATABASE_URL='postgres://postgres@localhost:5432/postgres?sslmode=disable' make test-db
 PATHLEDGER_DATABASE_URL='postgres://.../pathledger_e2e?sslmode=disable' make e2e
 make dist                       # cross-compiles the agent for amd64, arm64, armv7, mips, mipsle
-sudo -E make lab                # fault-injection lab (Linux, root, pip install pyroute2)
+# Fault-injection lab (Linux, root, pip install pyroute2):
+sudo env PATH="$PATH" PATHLEDGER_DATABASE_URL="$PATHLEDGER_DATABASE_URL" make lab
 ```
 
 Database tests create and drop their own uniquely named databases, so the URL

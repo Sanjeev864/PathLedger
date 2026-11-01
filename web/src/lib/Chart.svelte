@@ -24,10 +24,10 @@
     const t = points.map((p) => new Date(p.t).getTime())
     chart.setOption({
       animation: false,
-      grid: { left: 48, right: 48, top: 28, bottom: 28 },
-      legend: { top: 0, right: 0, textStyle: { color: ink }, itemWidth: 14, itemHeight: 8 },
+      grid: { left: 48, right: 48, top: 48, bottom: 28 },
+      legend: { top: 0, left: 0, textStyle: { color: ink }, itemWidth: 14, itemHeight: 8 },
       tooltip: { trigger: 'axis', valueFormatter: (v: unknown) => (v == null ? '—' : `${Number(v).toFixed(1)}`) },
-      xAxis: { type: 'time', axisLine: { lineStyle: { color: line } }, axisLabel: { color: ink } },
+      xAxis: { type: 'time', axisLine: { lineStyle: { color: line } }, axisLabel: { color: ink, hideOverlap: true } },
       yAxis: [
         { type: 'value', name: unit, nameTextStyle: { color: ink }, axisLabel: { color: ink }, splitLine: { lineStyle: { color: line } } },
         { type: 'value', name: 'fail %', max: 100, nameTextStyle: { color: ink }, axisLabel: { color: ink }, splitLine: { show: false } },
