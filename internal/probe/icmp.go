@@ -29,7 +29,8 @@ const (
 //
 // It prefers unprivileged datagram ping sockets (Linux
 // net.ipv4.ping_group_range, macOS) and falls back to raw sockets, which
-// need root or CAP_NET_RAW. IPv4 only for now.
+// need root or CAP_NET_RAW. On Windows it uses the system ICMP helper, which
+// needs no administrator rights. IPv4 only for now.
 type ICMP struct {
 	Resolver Resolver
 	// Spacing is the gap between echo requests; defaults to 200ms.
@@ -55,17 +56,6 @@ func (p *ICMP) Probe(ctx context.Context, t wire.Test) wire.Result {
 	}
 	details["remote_ip"] = addr.String()
 
-	listen := p.Listen
-	if listen == nil {
-		listen = listenICMP
-	}
-	conn, raw, err := listen()
-	if err != nil {
-		return failure(wire.ErrClassConfig, err)
-	}
-	defer conn.Close()
-	details["socket"] = map[bool]string{true: "raw", false: "datagram"}[raw]
-
 	count := t.Params.Count
 	if count == 0 {
 		count = wire.DefaultICMPCount
@@ -74,6 +64,20 @@ func (p *ICMP) Probe(ctx context.Context, t wire.Test) wire.Result {
 	if spacing == 0 {
 		spacing = 200 * time.Millisecond
 	}
+
+	listen := p.Listen
+	if listen == nil {
+		if sp := systemPinger(); sp != nil {
+			return sysEcho(ctx, sp, addr, count, spacing, t.Timeout(), details)
+		}
+		listen = listenICMP
+	}
+	conn, raw, err := listen()
+	if err != nil {
+		return failure(wire.ErrClassConfig, err)
+	}
+	defer conn.Close()
+	details["socket"] = map[bool]string{true: "raw", false: "datagram"}[raw]
 
 	s, err := newEchoSession(conn, raw, addr)
 	if err != nil {

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- PathLedger agent for macOS. Installed by install-agent.sh. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.pathledger.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/pathledger-agent</string>
+    <string>-state-dir</string><string>/Library/Application Support/PathLedger/agent</string>
+    <string>-log-file</string><string>/Library/Logs/PathLedger/agent.log</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>

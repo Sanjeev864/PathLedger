@@ -182,6 +182,9 @@ func (a *Agent) rotateCredential(ctx context.Context) error {
 	return nil
 }
 
+// Close releases resources of an agent that will not be run.
+func (a *Agent) Close() error { return a.spool.Close() }
+
 // ID returns the agent's identifier.
 func (a *Agent) ID() string { return a.state.AgentID }
 

@@ -108,3 +108,61 @@ jobs:
       - name: Compose logs on failure
         if: failure()
         run: docker compose -f deploy/docker-compose.yml logs
+
+  # The agent runs on ordinary computers, so test it on each desktop/server
+  # OS: unit tests, then the real installer as a background service against a
+  # real controller, until ICMP, TCP and traceroute results arrive.
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Start PostgreSQL (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"
+          sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+          echo "PG_URL=postgres://postgres:postgres@127.0.0.1:5432" >> "$GITHUB_ENV"
+      - name: Start PostgreSQL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@16
+          brew services start postgresql@16
+          for i in $(seq 1 30); do "$(brew --prefix postgresql@16)/bin/pg_isready" -h 127.0.0.1 && break; sleep 2; done
+          echo "PG_URL=postgres://$USER@127.0.0.1:5432" >> "$GITHUB_ENV"
+      - name: Start PostgreSQL (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $svc = Get-Service -Name "postgresql*"
+          Set-Service -InputObject $svc -Status Running -StartupType Automatic
+          & "$env:PGBIN\pg_isready.exe" -h 127.0.0.1 -t 60
+          "PG_URL=postgres://postgres:root@127.0.0.1:5432" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Create databases
+        shell: bash
+        run: |
+          go run ./scripts/createdb "$PG_URL/postgres?sslmode=disable" pathledger_install
+      - name: Tests
+        shell: bash
+        env:
+          PATHLEDGER_TEST_DATABASE_URL: ${{ env.PG_URL }}/postgres?sslmode=disable
+        run: go test -count=1 ./...
+      - name: Build
+        shell: bash
+        run: go build -o bin/ ./cmd/pathledger-controller ./cmd/pathledger-agent
+      - name: Install agent as a service and check results (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: sudo env PATHLEDGER_DATABASE_URL="$PG_URL/pathledger_install?sslmode=disable" python3 -u scripts/install_e2e.py --bin bin
+      - name: Install agent as a service and check results (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATHLEDGER_DATABASE_URL = "$env:PG_URL/pathledger_install?sslmode=disable"
+          python -u scripts/install_e2e.py --bin bin
