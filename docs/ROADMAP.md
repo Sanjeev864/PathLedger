@@ -1,6 +1,6 @@
 # Roadmap and status
 
-Last updated: 2026-11-01 (Milestone 2).
+Last updated: 2026-11-01 (Milestone 3 software complete).
 
 * **MVP** = Milestones 1 + 2: enough for a campus pilot that shows real ISP faults.
 * **Production release** = Milestone 3: the point at which a customer can be charged.
@@ -44,13 +44,21 @@ Last updated: 2026-11-01 (Milestone 2).
 | Fault-injection lab (network namespaces, real controller + agent) | Done | Runs in CI; latest results in [lab/results.md](../lab/results.md) |
 | Campus pilot | **Not started** | Needs written permission from the college IT department |
 
-## Milestone 3 — Production release
+## Milestone 3 — Production release 🟡 software complete; pilots open
 
-- [ ] User accounts (argon2id), roles, MSP multi-tenant console
-- [ ] Mutual TLS for agents; signed agent auto-update; OpenWrt package
-- [ ] Prometheus metrics; retention, compression and backup policies
-- [ ] Monthly ISP SLA report (PDF)
-- [ ] First 5–10 paying pilot sites
+| Feature | Status | Verified by |
+| --- | --- | --- |
+| User accounts (argon2id), owner/admin/viewer roles, sessions with CSRF protection | Done | API tests; real browser (cookie flags, viewer is read-only) |
+| MSP multi-tenancy: one login across customers, organisation switcher, invitations | Done | API tests; real browser |
+| Monthly service report: availability, ISP-attributed time, incidents by verdict, latency percentiles, loss, data coverage; printable / save as PDF | Done | Unit tests of the arithmetic; database and API tests; checked in a real browser and printed to PDF |
+| Data retention job (results, events, deliveries, expired sessions/tokens; TimescaleDB `drop_chunks`) | Done | Database test |
+| Prometheus metrics on a separate listener | Done | Unit tests; scraped from a running controller |
+| Agent credential rotation (30-day policy and on demand, crash-safe hand-over) | Done | Database and API tests; real agent rotated against a running controller |
+| Signed agent self-update (offline ed25519 key, pinned on agents, rollback after 3 failed starts) | Done | Unit tests (tampering, wrong key, downgrade, crash loop); real v0.1.0 → v0.2.0 update with exec in place and relaunch after restart |
+| Mutual TLS for agents | **Deferred** | TLS terminates at Caddy/Cloudflare in the recommended deployment, so mTLS needs certificate forwarding and a private CA; bearer tokens are hashed at rest and rotated. Enterprise option. |
+| OpenWrt package | **Not started** | Needs the OpenWrt SDK and a test router. The static mips/mipsle/arm agent binaries already run on OpenWrt by hand. |
+| Backups | Documented (`pg_dump` daily) | Operator's responsibility; not automated |
+| First 5–10 paying pilot sites | **Not started** | Owner's task |
 
 ## Milestone 4 — Differentiation
 
@@ -73,8 +81,11 @@ failover built on PathLedger measurements.
 | Analytics | Fixed: during recovery, a network incident was relabelled "application" as some tests came back first. Network verdicts are now kept until the event resolves, and the lab checks the stored verdict after recovery. | — |
 | Analytics | A traceroute is at most 60 s old, so `local`/`upstream` verdicts can start as `isp` and be refined within a minute (the lab measures this). | Trigger an on-demand traceroute when a site turns unhealthy (M3). |
 | Agents | Not yet run on a Raspberry Pi or OpenWrt router; only cross-compiled. ICMP and traceroute are IPv4-only. | Device test and ICMPv6 in M3. |
-| Database | TimescaleDB path untested; no retention policy. | M3. |
-| Dashboard | Signs in with an API key held in the browser tab; no user accounts yet. Bundle is ~200 KB gzipped (mostly ECharts). | User accounts and roles in M3. |
+| Database | TimescaleDB path (hypertable, `drop_chunks` retention) untested against a real TimescaleDB; compression not configured. | Test before the first large customer. |
+| Dashboard | Bundle is ~210 KB gzipped (mostly ECharts). | Code-split charts if load time matters on slow links. |
+| Reports | Availability counts time with an open incident; an incident's final verdict is applied to its whole duration. Times are in the viewer's browser time zone. | Per-tenant report time zone setting. |
+| Agent updates | Self-update execs in place on Linux/Unix only; the agent's state directory must allow executing files. Rollout is all-at-once per controller. | Staged rollouts per tenant (enterprise). |
+| Metrics | Analytics counters are per replica; HTTP latency is a sum/count pair, not a histogram. | Histograms if latency SLOs are needed. |
 | Rate limits | Kept in memory per controller replica. | Shared limits only if several replicas are run. |
 | DNS probe | Reports answers and timing, not RCODE/TTL/DNSSEC. | Raw DNS client if customers need it. |
 | Product | No licence chosen. | Owner decision. |

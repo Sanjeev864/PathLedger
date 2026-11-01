@@ -14,10 +14,14 @@ SLA this month?* Every problem becomes an event with a verdict (`local`,
 `isp`, `upstream`, `dns`, `app` or `offline`) and the evidence behind it,
 delivered by email, Telegram or signed webhook, and shown in a web dashboard.
 
-> **Status:** Milestones 1 (Foundation) and 2 (Insight) are complete. The
+> **Status:** Milestones 1 (Foundation) and 2 (Insight) are complete, and the
+> Milestone 3 (production release) software is built: user accounts and roles,
+> MSP multi-tenancy, monthly service reports, data retention, Prometheus
+> metrics, agent credential rotation and signed agent self-updates. The
 > fault-injection lab in CI checks the verdicts against real injected faults —
-> see [lab/results.md](lab/results.md). Next is Milestone 3 (production
-> release). Details, open items and known issues: [docs/ROADMAP.md](docs/ROADMAP.md).
+> see [lab/results.md](lab/results.md). Still open before charging customers:
+> a test on real branch hardware and paying pilots. Details, open items and
+> known issues: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## How it works
 
@@ -118,6 +122,7 @@ ICMP probes use unprivileged ping sockets where the OS allows them
 | --- | --- |
 | `cmd/pathledger-agent` | Agent binary |
 | `cmd/pathledger-controller` | Controller binary and admin CLI |
+| `cmd/pathledger-release` | Release signing tool (keygen, sign, verify) |
 | `pkg/wire` | Versioned agent ↔ controller protocol and validation |
 | `internal/probe` | ICMP, DNS, TCP, TLS and HTTP probes |
 | `internal/agent` | Enrolment, scheduler, spool, uploader |
@@ -126,7 +131,12 @@ ICMP probes use unprivileged ping sockets where the OS allows them
 | `internal/controller/auth` | Credential generation and hashing |
 | `internal/controller/analytics` | Baselines, site status, fault verdicts, events |
 | `internal/controller/alert` | Email, Telegram and webhook delivery via an outbox |
+| `internal/controller/report` | Monthly service-level report |
+| `internal/controller/maintenance` | Data retention job |
+| `internal/controller/releases` | Serves signed agent releases |
 | `internal/controller/webui` | Embedded dashboard |
+| `internal/metrics` | Prometheus text-format metrics |
+| `internal/update` | Signed release manifests and version rules |
 | `internal/enrich` | Address scope and IP → AS lookup |
 | `web/` | Dashboard source (Svelte 5, TypeScript, ECharts) |
 | `lab/` | Fault-injection lab and its latest results |

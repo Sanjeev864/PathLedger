@@ -21,6 +21,7 @@ PostgreSQL reachable at PATHLEDGER_DATABASE_URL (an empty database).
 """
 
 import argparse
+import errno
 import json
 import os
 import shutil
@@ -34,6 +35,7 @@ import time
 import urllib.request
 
 from pyroute2 import IPRoute, NetNS, netns
+from pyroute2.netlink.exceptions import NetlinkError
 
 PREFIX = "pl-"
 NS = ["branch", "gw", "isp", "transit", "servers"]
@@ -92,7 +94,13 @@ def teardown():
     with IPRoute() as ipr:
         idx = ipr.link_lookup(ifname="plmgmt0")
         if idx:
-            ipr.link("del", index=idx[0])
+            # Removing the namespaces deletes the veth peer asynchronously,
+            # so the link may vanish between lookup and delete.
+            try:
+                ipr.link("del", index=idx[0])
+            except NetlinkError as e:
+                if e.code != errno.ENODEV:
+                    raise
 
 
 def setup():
