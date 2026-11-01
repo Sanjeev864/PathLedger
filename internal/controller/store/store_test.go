@@ -3,11 +3,13 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/sanjeev864/pathledger/internal/controller/store"
+	"github.com/sanjeev864/pathledger/internal/enrich"
 	"github.com/sanjeev864/pathledger/internal/testutil/pgtest"
 	"github.com/sanjeev864/pathledger/pkg/wire"
 )
@@ -208,5 +210,38 @@ func TestPlanScopingAndIngest(t *testing.T) {
 	}
 	if err := f.s.DeleteTest(ctx, f.tenant.ID, siteTest.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTracerouteIngestAnnotatesHops(t *testing.T) {
+	f := setup(t)
+	db, err := enrich.Load(strings.NewReader("49.204.0.0\t49.207.255.255\t24309\tIN\tACT Fibernet\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetASNData(db)
+	tr, err := f.s.CreateTest(ctx, f.tenant.ID, nil, wire.Test{Kind: wire.KindTraceroute, Target: "1.1.1.1", IntervalSeconds: 300, TimeoutMillis: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := enroll(t, f, f.site.ID)
+	id, _ := f.s.AuthenticateAgent(ctx, agent.AgentToken)
+	now := time.Now().UTC()
+	res := wire.Result{TestID: tr.ID, Time: now, Kind: wire.KindTraceroute, Target: "1.1.1.1", Success: true,
+		Hops: []wire.Hop{
+			{TTL: 1, Addr: "192.168.1.1", Sent: 3, Received: 3, AvgMS: wire.Float(1.1)},
+			{TTL: 2, Addr: "49.205.0.1", Sent: 3, Received: 2, AvgMS: wire.Float(9.4), ASN: 1}, // agent-sent ASN is overwritten
+			{TTL: 3, Sent: 3},
+		}}
+	if acc, rej, err := f.s.InsertResults(ctx, id, []wire.Result{res}); err != nil || acc != 1 || rej != 0 {
+		t.Fatalf("insert: %d %d %v", acc, rej, err)
+	}
+	got, err := f.s.QueryResults(ctx, f.tenant.ID, store.ResultFilter{TestID: tr.ID, From: now.Add(-time.Minute), To: now.Add(time.Minute), Limit: 10})
+	if err != nil || len(got) != 1 || len(got[0].Hops) != 3 {
+		t.Fatalf("query: %+v %v", got, err)
+	}
+	h := got[0].Hops
+	if h[0].Scope != "lan" || h[1].ASN != 24309 || h[1].ASName != "ACT Fibernet" || h[1].Scope != "public" || h[2].Addr != "" {
+		t.Fatalf("hops not annotated: %+v", h)
 	}
 }

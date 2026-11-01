@@ -46,11 +46,12 @@ func NewRunner() *Runner {
 	res := net.DefaultResolver
 	return &Runner{
 		probers: map[wire.ProbeKind]Prober{
-			wire.KindICMP: &ICMP{Resolver: res},
-			wire.KindDNS:  &DNS{},
-			wire.KindTCP:  &TCP{Resolver: res},
-			wire.KindTLS:  &TLS{Resolver: res},
-			wire.KindHTTP: &HTTP{},
+			wire.KindICMP:       &ICMP{Resolver: res},
+			wire.KindDNS:        &DNS{},
+			wire.KindTCP:        &TCP{Resolver: res},
+			wire.KindTLS:        &TLS{Resolver: res},
+			wire.KindHTTP:       &HTTP{},
+			wire.KindTraceroute: &Traceroute{Resolver: res},
 		},
 		now: time.Now,
 	}

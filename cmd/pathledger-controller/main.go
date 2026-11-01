@@ -24,6 +24,7 @@ import (
 	"github.com/sanjeev864/pathledger/internal/buildinfo"
 	"github.com/sanjeev864/pathledger/internal/controller/api"
 	"github.com/sanjeev864/pathledger/internal/controller/store"
+	"github.com/sanjeev864/pathledger/internal/enrich"
 	"github.com/sanjeev864/pathledger/internal/logging"
 )
 
@@ -41,6 +42,7 @@ Configuration (environment):
   PATHLEDGER_LISTEN_ADDR   listen address (default :8080)
   PATHLEDGER_LOG_LEVEL     debug, info, warn, error (default info)
   PATHLEDGER_LOG_FORMAT    json or text (default json)
+  PATHLEDGER_ASN_DB        path to IPtoASN ip2asn-v4.tsv(.gz) (optional; see scripts/fetch-asn-db.sh)
 `
 
 func main() {
@@ -121,6 +123,16 @@ func withStore(ctx context.Context, log *slog.Logger, fn func(*store.Store) erro
 
 func serve(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	addr := env("PATHLEDGER_LISTEN_ADDR", ":8080")
+	if path := os.Getenv("PATHLEDGER_ASN_DB"); path != "" {
+		db, err := enrich.LoadFile(path)
+		if err != nil {
+			return fmt.Errorf("loading ASN data from %s: %w", path, err)
+		}
+		st.SetASNData(db)
+		log.Info("ASN data loaded", "ranges", db.Len())
+	} else {
+		log.Warn("PATHLEDGER_ASN_DB not set; traceroute hops will not be attributed to networks")
+	}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           api.New(st, log).Handler(),

@@ -30,6 +30,10 @@ services:
       PATHLEDGER_DATABASE_URL: postgres://pathledger:${POSTGRES_PASSWORD:-pathledger-dev-only}@db:5432/pathledger?sslmode=disable
       PATHLEDGER_LISTEN_ADDR: ":8080"
       PATHLEDGER_LOG_LEVEL: ${PATHLEDGER_LOG_LEVEL:-info}
+      # Optional: download with scripts/fetch-asn-db.sh into deploy/data/
+      PATHLEDGER_ASN_DB: ${PATHLEDGER_ASN_DB:-}
+    volumes:
+      - ./data:/data:ro
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -47,6 +51,12 @@ services:
       args:
         BINARY: pathledger-agent
     command: ["-controller", "http://controller:8080", "-state-dir", "/var/lib/pathledger-agent"]
+    # Traceroute needs a raw ICMP socket. Run as container root with every
+    # capability dropped except NET_RAW, on a read-only filesystem.
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [NET_RAW]
+    read_only: true
     environment:
       PATHLEDGER_ENROLL_TOKEN: ${PATHLEDGER_ENROLL_TOKEN:-}
     volumes:

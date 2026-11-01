@@ -20,10 +20,14 @@ const (
 	KindTCP  ProbeKind = "tcp"
 	KindTLS  ProbeKind = "tls"
 	KindHTTP ProbeKind = "http"
+	// KindTraceroute maps the forward path hop by hop (Paris-style: the flow
+	// identifier is held constant so ECMP load balancers keep every probe on
+	// the same path).
+	KindTraceroute ProbeKind = "traceroute"
 )
 
 // AllKinds lists every supported probe kind in a stable order.
-var AllKinds = []ProbeKind{KindICMP, KindDNS, KindTCP, KindTLS, KindHTTP}
+var AllKinds = []ProbeKind{KindICMP, KindDNS, KindTCP, KindTLS, KindHTTP, KindTraceroute}
 
 // Valid reports whether k is a supported probe kind.
 func (k ProbeKind) Valid() bool {
@@ -55,8 +59,11 @@ const (
 
 // TestParams holds optional, kind-specific settings for a test.
 type TestParams struct {
-	// Count is the number of ICMP echo requests per run (icmp only).
+	// Count is the number of ICMP echo requests per run (icmp), or the
+	// number of probes sent per hop (traceroute).
 	Count int `json:"count,omitempty"`
+	// MaxHops bounds how far a traceroute walks (traceroute only).
+	MaxHops int `json:"max_hops,omitempty"`
 	// Resolver is an "ip:port" DNS server to query instead of the system
 	// resolver (dns only).
 	Resolver string `json:"resolver,omitempty"`
@@ -100,6 +107,28 @@ type Result struct {
 	ErrorClass ErrorClass        `json:"error_class,omitempty"`
 	Error      string            `json:"error,omitempty"`
 	Details    map[string]string `json:"details,omitempty"`
+	// Hops is the forward path (traceroute only).
+	Hops []Hop `json:"hops,omitempty"`
+}
+
+// Hop is one TTL step of a traceroute.
+type Hop struct {
+	TTL int `json:"ttl"`
+	// Addr is the router that answered; empty when no probe was answered.
+	Addr     string   `json:"addr,omitempty"`
+	Sent     int      `json:"sent"`
+	Received int      `json:"received"`
+	AvgMS    *float64 `json:"avg_ms,omitempty"`
+	MinMS    *float64 `json:"min_ms,omitempty"`
+	MaxMS    *float64 `json:"max_ms,omitempty"`
+	// Unreachable is set when the router reported the destination
+	// unreachable: "host", "net", "admin" (filtered) or "other".
+	Unreachable string `json:"unreachable,omitempty"`
+	// Scope, ASN and ASName are filled in by the controller, not the agent.
+	// Scope is "lan", "cgnat", "loopback", "public" or "other".
+	Scope  string `json:"scope,omitempty"`
+	ASN    int    `json:"asn,omitempty"`
+	ASName string `json:"as_name,omitempty"`
 }
 
 // EnrollRequest exchanges a single-use enrolment token for agent credentials.

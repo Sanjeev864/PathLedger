@@ -39,9 +39,14 @@ func (s *Store) InsertResults(ctx context.Context, agent AgentIdentity, results 
 		if details == nil {
 			details = map[string]string{}
 		}
+		var hops any // NULL for non-traceroute results
+		if len(r.Hops) > 0 {
+			s.asn.AnnotateHops(r.Hops)
+			hops = r.Hops
+		}
 		rows = append(rows, []any{
 			r.Time, now, agent.TenantID, agent.SiteID, agent.AgentID, r.TestID, string(r.Kind), r.Target,
-			r.Success, r.LatencyMS, r.LossPct, r.JitterMS, string(r.ErrorClass), r.Error, details,
+			r.Success, r.LatencyMS, r.LossPct, r.JitterMS, string(r.ErrorClass), r.Error, details, hops,
 		})
 	}
 	if len(rows) == 0 {
@@ -49,7 +54,7 @@ func (s *Store) InsertResults(ctx context.Context, agent AgentIdentity, results 
 	}
 	n, err := s.pool.CopyFrom(ctx, pgx.Identifier{"results"},
 		[]string{"time", "received_at", "tenant_id", "site_id", "agent_id", "test_id", "kind", "target",
-			"success", "latency_ms", "loss_pct", "jitter_ms", "error_class", "error", "details"},
+			"success", "latency_ms", "loss_pct", "jitter_ms", "error_class", "error", "details", "hops"},
 		pgx.CopyFromRows(rows))
 	if err != nil {
 		return 0, 0, err
@@ -75,7 +80,7 @@ type StoredResult struct {
 
 // QueryResults returns a tenant's results, newest first.
 func (s *Store) QueryResults(ctx context.Context, tenantID string, f ResultFilter) ([]StoredResult, error) {
-	q := `SELECT time, site_id, agent_id, test_id, kind, target, success, latency_ms, loss_pct, jitter_ms, error_class, error, details
+	q := `SELECT time, site_id, agent_id, test_id, kind, target, success, latency_ms, loss_pct, jitter_ms, error_class, error, details, hops
 	      FROM results
 	      WHERE tenant_id = $1 AND time >= $2 AND time < $3
 	        AND ($4::uuid IS NULL OR site_id = $4::uuid)
@@ -90,7 +95,7 @@ func (s *Store) QueryResults(ctx context.Context, tenantID string, f ResultFilte
 		var x StoredResult
 		var kind, class string
 		err := r.Scan(&x.Time, &x.SiteID, &x.AgentID, &x.TestID, &kind, &x.Target, &x.Success,
-			&x.LatencyMS, &x.LossPct, &x.JitterMS, &class, &x.Error, &x.Details)
+			&x.LatencyMS, &x.LossPct, &x.JitterMS, &class, &x.Error, &x.Details, &x.Hops)
 		x.Kind, x.ErrorClass = wire.ProbeKind(kind), wire.ErrorClass(class)
 		return x, err
 	})

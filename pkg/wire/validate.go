@@ -19,6 +19,12 @@ const (
 	MaxTimeoutMillis   = 30_000
 	MaxICMPCount       = 20
 	DefaultICMPCount   = 5
+	MaxTraceHops       = 32
+	DefaultTraceHops   = 30
+	MaxTraceCount      = 5
+	DefaultTraceCount  = 3
+	// MinTraceInterval keeps path discovery to at most once a minute.
+	MinTraceInterval = 60
 	MaxTargetLength    = 512
 	MaxResultsPerBatch = 500
 	MaxDetailEntries   = 32
@@ -59,18 +65,49 @@ func (t Test) Validate() error {
 	if t.TimeoutMillis >= t.IntervalSeconds*1000 {
 		return invalid("timeout_millis", "must be shorter than the interval")
 	}
+	if t.Kind == KindTraceroute {
+		if t.IntervalSeconds < MinTraceInterval {
+			return invalid("interval_seconds", "traceroute tests run at most once every %d seconds", MinTraceInterval)
+		}
+		hops, count := t.Params.TraceHops(), t.Params.TraceCount()
+		// timeout_millis is the wait per probe; the worst case must fit the interval.
+		if hops*count*t.TimeoutMillis >= t.IntervalSeconds*1000 {
+			return invalid("timeout_millis", "max_hops × count × timeout_millis must be shorter than the interval")
+		}
+	}
 	if err := ValidateTarget(t.Kind, t.Target); err != nil {
 		return err
 	}
 	return t.Params.validate(t.Kind)
 }
 
-func (p TestParams) validate(kind ProbeKind) error {
-	if p.Count != 0 && kind != KindICMP {
-		return invalid("params.count", "only applies to icmp tests")
+// TraceHops returns the effective traceroute hop limit.
+func (p TestParams) TraceHops() int {
+	if p.MaxHops == 0 {
+		return DefaultTraceHops
 	}
-	if p.Count < 0 || p.Count > MaxICMPCount {
+	return p.MaxHops
+}
+
+// TraceCount returns the effective probes per traceroute hop.
+func (p TestParams) TraceCount() int {
+	if p.Count == 0 {
+		return DefaultTraceCount
+	}
+	return p.Count
+}
+
+func (p TestParams) validate(kind ProbeKind) error {
+	switch {
+	case p.Count != 0 && kind != KindICMP && kind != KindTraceroute:
+		return invalid("params.count", "only applies to icmp and traceroute tests")
+	case kind == KindTraceroute && (p.Count < 0 || p.Count > MaxTraceCount):
+		return invalid("params.count", "must be between 1 and %d", MaxTraceCount)
+	case p.Count < 0 || p.Count > MaxICMPCount:
 		return invalid("params.count", "must be between 1 and %d", MaxICMPCount)
+	}
+	if p.MaxHops != 0 && (kind != KindTraceroute || p.MaxHops < 1 || p.MaxHops > MaxTraceHops) {
+		return invalid("params.max_hops", "applies only to traceroute tests and must be between 1 and %d", MaxTraceHops)
 	}
 	if p.Resolver != "" {
 		if kind != KindDNS {
@@ -102,7 +139,7 @@ func ValidateTarget(kind ProbeKind, target string) error {
 		return invalid("target", "must be at most %d characters", MaxTargetLength)
 	}
 	switch kind {
-	case KindICMP:
+	case KindICMP, KindTraceroute:
 		if !validHost(target) {
 			return invalid("target", "must be a hostname or IP address")
 		}
@@ -195,6 +232,14 @@ func (r Result) Validate() error {
 	for k, v := range r.Details {
 		if len(k) > 64 || len(v) > MaxDetailValueLen {
 			return invalid("details", "entry %q is too long", k)
+		}
+	}
+	if len(r.Hops) > MaxTraceHops {
+		return invalid("hops", "at most %d hops", MaxTraceHops)
+	}
+	for _, h := range r.Hops {
+		if h.TTL < 1 || h.TTL > MaxTraceHops || h.Sent < 0 || h.Received < 0 || h.Received > h.Sent || len(h.Addr) > 64 || len(h.Unreachable) > 16 {
+			return invalid("hops", "hop %d is malformed", h.TTL)
 		}
 	}
 	return nil

@@ -1,0 +1,2 @@
+# Place ip2asn-v4.tsv.gz here (scripts/fetch-asn-db.sh deploy/data/ip2asn-v4.tsv.gz)
+# and set PATHLEDGER_ASN_DB=/data/ip2asn-v4.tsv.gz in .env.

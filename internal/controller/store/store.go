@@ -18,6 +18,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/sanjeev864/pathledger/internal/enrich"
 )
 
 //go:embed migrations/*.sql
@@ -35,7 +37,12 @@ type Store struct {
 	pool *pgxpool.Pool
 	log  *slog.Logger
 	now  func() time.Time
+	asn  *enrich.DB
 }
+
+// SetASNData enables AS attribution of traceroute hops at ingest. A nil
+// database still classifies hops as LAN, CGNAT or public.
+func (s *Store) SetASNData(db *enrich.DB) { s.asn = db }
 
 // Open connects to PostgreSQL and verifies the connection.
 func Open(ctx context.Context, databaseURL string, log *slog.Logger) (*Store, error) {
