@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"github.com/sanjeev864/pathledger/internal/fsperm"
+
 	"io"
 	"log/slog"
 	"os"
@@ -135,9 +137,8 @@ func TestStateRoundTrip(t *testing.T) {
 	if err := SaveState(path, want); err != nil {
 		t.Fatal(err)
 	}
-	fi, _ := os.Stat(path)
-	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("state file mode %v, want 0600", fi.Mode().Perm())
+	if ok, err := fsperm.Private(path); err != nil || !ok {
+		t.Fatalf("state file is readable by others: %v", err)
 	}
 	got, err := LoadState(path)
 	if err != nil || got.AgentToken != want.AgentToken {

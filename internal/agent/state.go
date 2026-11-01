@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
+
+	"github.com/sanjeev864/pathledger/internal/fsperm"
 )
 
 // State is the agent's persisted identity. It contains a credential, so it
@@ -44,8 +47,15 @@ func LoadState(path string) (State, error) {
 
 // SaveState atomically writes the state file with mode 0600.
 func SaveState(path string, s State) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
+	}
+	// On Windows file modes do nothing; the folder's access list is what
+	// keeps the credential private, so failing to set it is fatal there.
+	// Elsewhere the file's own 0600 mode suffices.
+	if err := fsperm.RestrictDir(dir); err != nil && runtime.GOOS == "windows" {
+		return fmt.Errorf("restricting access to %s: %w", dir, err)
 	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
