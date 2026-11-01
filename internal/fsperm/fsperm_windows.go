@@ -46,20 +46,12 @@ func restrictDir(dir string) error { return apply(dir, true) }
 
 func restrictFile(path string) error { return apply(path, false) }
 
-// private checks that every allow entry in the DACL is for SYSTEM,
-// Administrators, CREATOR OWNER or the current user, and that the DACL does
-// not inherit entries from the parent folder.
+// private checks that every allow entry in the DACL, inherited or not, is
+// for SYSTEM, Administrators, CREATOR OWNER or the current user.
 func private(path string) (bool, error) {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return false, err
-	}
-	ctl, _, err := sd.Control()
-	if err != nil {
-		return false, err
-	}
-	if ctl&windows.SE_DACL_PROTECTED == 0 {
-		return false, nil
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil || dacl == nil {
